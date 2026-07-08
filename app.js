@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'inventory_mvp_v1';
-const ADMIN_PASSWORD = 'yousun123'; // 수불 이력 수정/삭제 시 요구되는 관리자 비밀번호
+const ADMIN_PASSWORD = '__ADMIN_PASSWORD_PLACEHOLDER__'; // 수불 이력 수정/삭제 시 요구되는 관리자 비밀번호 (배포 시 설정값으로 주입됨)
 
 const seedItems = [
   { id: 'u-vest-95', category: '유니폼 상의', name: '조끼', size: '95', initialStock: 5, unitPrice: 0 },
