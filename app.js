@@ -277,8 +277,10 @@ function syncTransactionItem() {
 }
 
 function syncTransactionAmount() {
-  const qty = Number(els.transactionForm.quantity.value || 0);
   const type = els.transactionForm.type.value;
+  // 재고조정만 음수 허용(재고 차감용), 나머지 구분은 최소 1로 제한
+  els.transactionForm.quantity.min = (type === '재고조정') ? '' : '1';
+  const qty = Number(els.transactionForm.quantity.value || 0);
   const unitPrice = Number(els.transactionUnitPrice.value || 0);
   els.transactionAmount.value = type === '분출' ? qty * unitPrice : 0;
 }

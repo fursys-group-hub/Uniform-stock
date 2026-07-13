@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>재고관리 MVP</title>
-  <link rel="stylesheet" href="./styles.css?v=6" />
+  <link rel="stylesheet" href="./styles.css?v=7" />
 </head>
 <body>
   <div class="app-shell">
@@ -88,7 +88,7 @@
               </label>
               <label class="span-2"><span>품목</span><select name="itemId" id="transactionItemSelect" required></select></label>
               <label><span>사이즈</span><input type="text" name="size" id="transactionSize" readonly /></label>
-              <label><span>수량</span><input type="number" name="quantity" min="1" required /></label>
+              <label><span>수량</span><input type="number" name="quantity" step="1" required /></label>
               <label><span>분출 담당자</span><input type="text" name="issuer" /></label>
               <label><span>수령 담당자</span><input type="text" name="receiver" /></label>
               <label><span>적용 단가</span><input type="number" name="unitPrice" id="transactionUnitPrice" readonly /></label>
@@ -392,6 +392,6 @@
     </article>
   </template>
 
-  <script src="./app.js?v=6"></script>
+  <script src="./app.js?v=7"></script>
 </body>
 </html>
