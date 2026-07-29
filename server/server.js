@@ -34,9 +34,13 @@ if (!DATABASE_URL) { console.error('[server] DATABASE_URL 이 없습니다.'); p
 // DATE(1082)는 시간대 변환 없이 'YYYY-MM-DD' 문자열 그대로 받는다(서버 시간대에 따른 하루 밀림 방지).
 pg.types.setTypeParser(1082, (v) => v);
 
-const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 });
-// 새 연결마다 검색 경로를 전용 스키마로 고정
-pool.on('connect', (client) => { client.query(`set search_path to "${DB_SCHEMA}", public`); });
+// 연결 시작 시점에 검색 경로를 전용 스키마로 고정(옵션 파라미터 — 런타임 SET 경합/경고 없음)
+const pool = new pg.Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 5,
+  options: `-c search_path=${DB_SCHEMA},public`
+});
 pool.on('error', (e) => console.error('[pool]', e.message));
 
 // ---- 행 ↔ 앱 객체 매핑 ----
@@ -143,6 +147,13 @@ app.post('/api/logs', requireAuth, async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+app.get('/api/logs', requireAuth, async (req, res) => {
+  try {
+    const q = await pool.query('select at, actor, action, target from activity_logs order by at desc limit 300');
+    res.json(q.rows.map((r) => ({ at: r.at, actor: r.actor || '', action: r.action || '', target: r.target || '' })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // 초기화/복원 — 트랜잭션으로 통째 교체
 app.post('/api/replace-all', requireAuth, async (req, res) => {
   const { items = [], transactions = [], audits = [] } = req.body || {};
@@ -185,6 +196,7 @@ app.get('/api/health', async (req, res) => {
 
 // 정적 프론트엔드 (public/ 만 노출)
 app.use(express.static(PUBLIC_DIR));
+app.get('/dashboard', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'dashboard.html')));
 app.get('*', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
 
 app.listen(PORT, () => console.log(`[server] http://localhost:${PORT}  schema=${DB_SCHEMA}`));

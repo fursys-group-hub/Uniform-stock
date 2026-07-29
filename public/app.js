@@ -57,7 +57,8 @@ const pageMap = {
   'audit-history': ['실사 이력', '실사 기록과 점검 이미지를 확인합니다.'],
   pricing: ['단가 관리', '분출 청구용 단가를 설정합니다.'],
   billing: ['청구 조회', '분출 기준 청구금액을 담당자별로 조회합니다.'],
-  analytics: ['분석 대시보드', '월별 입출고 추이와 재발주·회전율·수요예측을 한눈에 확인합니다.']
+  analytics: ['분석 대시보드', '월별 입출고 추이와 재발주·회전율·수요예측을 한눈에 확인합니다.'],
+  activity: ['활동 로그', '누가·언제·무엇을 했는지 기록을 확인합니다.']
 };
 
 let state = loadState();
@@ -113,7 +114,8 @@ const els = {
   loginForm: document.getElementById('loginForm'),
   loginError: document.getElementById('loginError'),
   logoutBtn: document.getElementById('logoutBtn'),
-  operatorLabel: document.getElementById('operatorLabel')
+  operatorLabel: document.getElementById('operatorLabel'),
+  activityTableBody: document.getElementById('activityTableBody')
 };
 
 function init() {
@@ -211,8 +213,11 @@ async function flushOutbox() {
   if (flushing || !getToken()) return;
   flushing = true;
   try {
-    let q = loadOutbox();
-    while (q.length) {
+    // 매 반복마다 아웃박스를 다시 읽는다 — 전송(await) 도중 새 작업이 추가돼도
+    // 덮어써서 잃지 않도록(항상 맨 앞부터 처리, 맨 뒤에 추가하는 FIFO).
+    while (true) {
+      const q = loadOutbox();
+      if (!q.length) break;
       const op = q[0];
       try {
         await applyOp(op);
@@ -222,8 +227,9 @@ async function flushOutbox() {
         console.warn('[sync] 반영 대기(재시도 예정):', op.type, e.message || e);
         break;                     // 실패 → 순서 보존 위해 중단, 다음 기회에 재시도
       }
-      q.shift();
-      saveOutbox(q);
+      const q2 = loadOutbox();     // await 사이에 추가됐을 수 있으니 다시 읽어 맨 앞만 제거
+      q2.shift();
+      saveOutbox(q2);
       online = true;
     }
     updateSyncBadge(loadOutbox().length);
@@ -275,6 +281,27 @@ function updateSyncBadge(pending) {
   else                { el.textContent = '● 동기화됨'; el.className = 'sync-badge ok'; }
 }
 
+// ---- 활동 로그 (Phase 4) ----
+// 주요 작업이 일어날 때마다 서버에 기록(아웃박스 경유 → 실패해도 재시도).
+function logActivity(action, target) {
+  enqueue({ type: 'log', entry: { actor: getOperator(), action, target: target || '' } });
+}
+
+async function renderActivity() {
+  if (!els.activityTableBody) return;
+  els.activityTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">불러오는 중…</td></tr>`;
+  try {
+    const rows = await api('/api/logs');
+    els.activityTableBody.innerHTML = rows.map(r => {
+      const t = r.at ? new Date(r.at).toLocaleString('ko-KR') : '-';
+      return `<tr><td>${t}</td><td>${r.actor || '-'}</td><td>${r.action || '-'}</td><td>${r.target || '-'}</td></tr>`;
+    }).join('') || `<tr><td colspan="4" class="empty-state">기록이 없습니다.</td></tr>`;
+  } catch (e) {
+    if (e.code === 401) { showLogin(); return; }
+    els.activityTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">로그를 불러오지 못했습니다.</td></tr>`;
+  }
+}
+
 /* ===================== 로그인 / 권한 (Phase 2) =====================
  * 관리자만 등록·수정·삭제 가능. 로그인 화면에선 관리자명 + 비밀번호만 입력한다.
  * 비밀번호는 백엔드가 검증하고, 쓰기 API는 로그인 토큰이 있어야만 동작한다(서버 강제).
@@ -324,6 +351,7 @@ async function doLogin(event) {
     localStorage.setItem(OPERATOR_KEY, name);
     els.loginForm.reset();
     if (els.loginError) els.loginError.hidden = true;
+    logActivity('로그인', name);
     onAuthed();
   } catch (e) {
     if (e.code === 401) showLoginError('비밀번호가 올바르지 않습니다.');
@@ -360,6 +388,7 @@ function onTabClick(event) {
   const [title, desc] = pageMap[tab];
   els.pageTitle.textContent = title;
   els.pageDesc.textContent = desc;
+  if (tab === 'activity') renderActivity();
 }
 
 function populateItemSelects() {
@@ -484,6 +513,7 @@ function submitTransaction(event) {
   };
   state.transactions.unshift(tx);
   enqueue({ type: 'insertTx', row: tx });
+  logActivity('수불 등록', `${tx.type} · ${item.name}/${item.size} · ${tx.quantity}개`);
   els.transactionForm.reset();
   setDefaultDates();
   syncTransactionItem();
@@ -531,8 +561,11 @@ function onHistoryAction(event) {
   if (delBtn) {
     if (!confirm('이 수불 이력을 삭제할까요? 삭제하면 되돌릴 수 없습니다.')) return;
     const delId = delBtn.dataset.delTx;
+    const delTx = state.transactions.find(tx => tx.id === delId);
+    const delItem = delTx ? getItemById(delTx.itemId) : null;
     state.transactions = state.transactions.filter(tx => tx.id !== delId);
     enqueue({ type: 'deleteTx', id: delId });
+    logActivity('수불 삭제', delTx ? `${delTx.type} · ${delItem?.name || ''}/${delItem?.size || ''} · ${delTx.quantity}개` : delId);
     renderAll();
     alert('수불 이력이 삭제되었습니다.');
     return;
@@ -587,6 +620,7 @@ function submitEdit(event) {
   tx.createdBy = tx.createdBy || getOperator();
 
   enqueue({ type: 'updateTx', row: tx });
+  logActivity('수불 수정', `${tx.type} · ${item.name}/${item.size} · ${tx.quantity}개`);
   closeEditModal();
   renderAll();
   alert('수불 이력이 수정되었습니다.');
@@ -641,6 +675,7 @@ async function submitAudit(event) {
   };
   state.audits.unshift(audit);
   enqueue({ type: 'insertAudit', row: audit });
+  logActivity('실사 등록', `${item.name}/${item.size} · 실사 ${countedQty} (차이 ${diffQty})`);
 
   if (diffQty !== 0) {
     const adjTx = {
@@ -720,6 +755,7 @@ function savePriceInline(event) {
   const item = getItemById(itemId);
   item.unitPrice = Number(input.value || 0);
   enqueue({ type: 'upsertItem', row: item });
+  logActivity('단가 변경', `${item.name}/${item.size} → ${item.unitPrice}`);
 
   // 이미 등록된 이 품목의 거래 내역에도 새 단가를 소급 적용한다.
   // (분출 내역의 청구금액 = 수량 × 새 단가로 다시 계산)
@@ -764,6 +800,7 @@ function resetSeedData() {
   if (!confirm('현재 입력된 데이터를 지우고 초기 재고 상태로 되돌릴까요?')) return;
   state = makeSeedState();
   enqueue({ type: 'replaceAll', state: structuredClone(state) });
+  logActivity('데이터 초기화', '전체');
   populateItemSelects();
   setDefaultDates();
   renderAll();
@@ -788,6 +825,7 @@ function restoreBackup(event) {
       state = JSON.parse(reader.result);
       saveState();
       enqueue({ type: 'replaceAll', state: structuredClone(state) });
+      logActivity('백업 복원', '전체');
       populateItemSelects();
       setDefaultDates();
       renderAll();
@@ -1026,6 +1064,7 @@ function saveSafetyInline(event) {
   const item = getItemById(itemId);
   item.safetyStock = Number(input.value || 0);
   enqueue({ type: 'upsertItem', row: item });
+  logActivity('안전재고 변경', `${item.name}/${item.size} → ${item.safetyStock}`);
   renderAll();
   alert('안전재고가 저장되었습니다.');
 }
