@@ -119,6 +119,8 @@ button, input, select, textarea {
   background: linear-gradient(135deg, #1e293b, #0f172a);
   padding: 20px;
 }
+/* hidden 속성이 확실히 숨기도록(display:flex 보다 우선) */
+.login-overlay[hidden] { display: none; }
 .login-card {
   background: var(--surface);
   border-radius: 16px;

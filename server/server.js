@@ -52,6 +52,14 @@ const rowToAudit = (r) => ({ id: r.id, date: asDate(r.date), inspector: r.inspec
 const app = express();
 app.use(express.json({ limit: '12mb' })); // 실사 이미지(base64) 대비
 
+// HTML/JS 는 캐시하지 않도록(항상 최신 화면을 받게)
+app.use((req, res, next) => {
+  if (/\.(html|js)$|\/$|\/dashboard$/.test(req.path)) {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  }
+  next();
+});
+
 // ---- 인증 (관리자 비밀번호 → JWT) ----
 function requireAuth(req, res, next) {
   const h = req.headers.authorization || '';
