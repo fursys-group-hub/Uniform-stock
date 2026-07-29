@@ -1,13 +1,18 @@
-FROM nginx:alpine
+FROM node:20-alpine
 
-COPY index.html app.js styles.css /usr/share/nginx/html/
-COPY vendor/ /usr/share/nginx/html/vendor/
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+WORKDIR /app
 
-EXPOSE 80
+# 의존성 먼저 설치(캐시 활용)
+COPY server/package.json server/package-lock.json ./server/
+RUN cd server && npm ci --omit=dev
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -q --spider http://127.0.0.1/ || exit 1
+# 서버 코드 + 프론트엔드(public/) 복사
+COPY server/server.js ./server/
+COPY public ./public
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=8s --retries=3 \
+  CMD wget -q --spider http://127.0.0.1:3000/api/health || exit 1
+
+CMD ["node", "server/server.js"]

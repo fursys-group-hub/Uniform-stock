@@ -102,6 +102,52 @@ button, input, select, textarea {
 .sync-badge.pending { color: #fde68a; }
 .sync-badge.off     { color: #cbd5e1; }
 
+.operator-label {
+  font-size: 12px;
+  color: #cbd5e1;
+  text-align: center;
+  padding: 2px 0;
+}
+
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  padding: 20px;
+}
+.login-card {
+  background: var(--surface);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 32px 28px;
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.login-card h1 { margin: 0; font-size: 22px; color: var(--text); }
+.login-desc { margin: 0 0 6px; color: var(--muted); font-size: 14px; }
+.login-card label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+.login-card input {
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 15px;
+}
+.login-btn { margin-top: 6px; padding: 12px; font-size: 15px; }
+.login-error {
+  background: #fee2e2;
+  color: var(--danger);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
 .content {
   padding: 28px;
 }

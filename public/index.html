@@ -7,6 +7,17 @@
   <link rel="stylesheet" href="./styles.css?v=7" />
 </head>
 <body>
+  <div id="loginOverlay" class="login-overlay" hidden>
+    <form id="loginForm" class="login-card">
+      <h1>재고관리 로그인</h1>
+      <p class="login-desc">관리자만 등록·수정할 수 있습니다.</p>
+      <label><span>관리자명</span><input type="text" name="operator" placeholder="예: 정유선" autocomplete="off" required /></label>
+      <label><span>비밀번호</span><input type="password" name="password" placeholder="비밀번호" required /></label>
+      <div id="loginError" class="login-error" hidden></div>
+      <button type="submit" class="primary-btn login-btn">로그인</button>
+    </form>
+  </div>
+
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
@@ -27,6 +38,8 @@
 
       <div class="side-actions">
         <div id="syncBadge" class="sync-badge">● 연결 확인 중…</div>
+        <div id="operatorLabel" class="operator-label" hidden></div>
+        <button id="logoutBtn" class="ghost-btn" hidden>로그아웃</button>
         <button id="seedBtn" class="ghost-btn">초기 데이터 다시 넣기</button>
         <button id="backupBtn" class="ghost-btn">백업 다운로드</button>
         <label class="ghost-btn file-label">
@@ -379,7 +392,7 @@
         <label class="span-2"><span>비고</span><textarea name="note" rows="3"></textarea></label>
         <div class="span-2 form-actions modal-actions">
           <button type="button" class="ghost-btn dark-ghost" id="editCancel">취소</button>
-          <button type="submit" class="primary-btn">수정 저장 (비밀번호 필요)</button>
+          <button type="submit" class="primary-btn">수정 저장</button>
         </div>
       </form>
     </div>
@@ -393,8 +406,6 @@
     </article>
   </template>
 
-  <script src="./config.js"></script>
-  <script src="./vendor/supabase.js"></script>
-  <script src="./app.js?v=9"></script>
+  <script src="./app.js?v=11"></script>
 </body>
 </html>

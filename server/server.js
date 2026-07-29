@@ -1,0 +1,190 @@
+// 유니폼 재고관리 백엔드
+// 브라우저(화면) → 이 서버 → 회사 전용 DB(스키마). DB 비밀번호는 서버에만 존재한다.
+import express from 'express';
+import jwt from 'jsonwebtoken';
+import pg from 'pg';
+import { readFileSync, existsSync } from 'fs';
+import { randomBytes } from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
+const PUBLIC_DIR = path.join(ROOT, 'public');
+
+// 로컬 개발용: process.env 에 없는 값만 ../.env 에서 채운다(프로덕션은 배포 시스템이 주입).
+(function loadEnv() {
+  const f = path.join(ROOT, '.env');
+  if (!existsSync(f)) return;
+  for (const line of readFileSync(f, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+  }
+})();
+
+const DATABASE_URL = process.env.DATABASE_URL;
+const DB_SCHEMA = process.env.DB_SCHEMA || 'public';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+// JWT 서명 키: 환경변수 우선, 없으면 프로세스 시작 시 무작위 생성(하드코딩 비밀 없음).
+const JWT_SECRET = process.env.JWT_SECRET || randomBytes(32).toString('hex');
+const PORT = Number(process.env.PORT || 3000);
+
+if (!DATABASE_URL) { console.error('[server] DATABASE_URL 이 없습니다.'); process.exit(1); }
+
+// DATE(1082)는 시간대 변환 없이 'YYYY-MM-DD' 문자열 그대로 받는다(서버 시간대에 따른 하루 밀림 방지).
+pg.types.setTypeParser(1082, (v) => v);
+
+const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 });
+// 새 연결마다 검색 경로를 전용 스키마로 고정
+pool.on('connect', (client) => { client.query(`set search_path to "${DB_SCHEMA}", public`); });
+pool.on('error', (e) => console.error('[pool]', e.message));
+
+// ---- 행 ↔ 앱 객체 매핑 ----
+const asDate = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d);
+const rowToItem = (r) => ({ id: r.id, category: r.category, name: r.name, size: r.size, unitPrice: Number(r.unit_price || 0), initialStock: Number(r.initial_stock || 0), safetyStock: Number(r.safety_stock || 0) });
+const rowToTx = (r) => ({ id: r.id, date: asDate(r.date), type: r.type, itemId: r.item_id, quantity: Number(r.quantity), issuer: r.issuer || '', receiver: r.receiver || '', note: r.note || '', unitPrice: Number(r.unit_price || 0), amount: Number(r.amount || 0), createdBy: r.created_by || '', createdAt: r.created_at });
+const rowToAudit = (r) => ({ id: r.id, date: asDate(r.date), inspector: r.inspector, itemId: r.item_id, systemQty: Number(r.system_qty), countedQty: Number(r.counted_qty), diffQty: Number(r.diff_qty), note: r.note || '', imageData: r.image_data || '', createdBy: r.created_by || '', createdAt: r.created_at });
+
+const app = express();
+app.use(express.json({ limit: '12mb' })); // 실사 이미지(base64) 대비
+
+// ---- 인증 (관리자 비밀번호 → JWT) ----
+function requireAuth(req, res, next) {
+  const h = req.headers.authorization || '';
+  const tok = h.startsWith('Bearer ') ? h.slice(7) : '';
+  try { req.user = jwt.verify(tok, JWT_SECRET); next(); }
+  catch { res.status(401).json({ error: 'unauthorized' }); }
+}
+
+app.post('/api/login', (req, res) => {
+  const { password } = req.body || {};
+  if (!ADMIN_PASSWORD) return res.status(500).json({ error: 'server-password-missing' });
+  if (!password || password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'invalid' });
+  const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
+  res.json({ token });
+});
+
+// 공개: 현재고만 (Phase 3 대시보드용 — 담당자/청구액 비노출)
+app.get('/api/stock', async (req, res) => {
+  try {
+    const q = await pool.query('select item_id,category,name,size,unit_price,safety_stock,current_stock from current_stock order by category,name,size');
+    res.json(q.rows.map((r) => ({ itemId: r.item_id, category: r.category, name: r.name, size: r.size, unitPrice: Number(r.unit_price || 0), safetyStock: Number(r.safety_stock || 0), currentStock: Number(r.current_stock || 0) })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 관리자: 전체 데이터
+app.get('/api/bootstrap', requireAuth, async (req, res) => {
+  try {
+    const [i, t, a] = await Promise.all([
+      pool.query('select * from items order by category,name,size'),
+      pool.query('select * from transactions order by created_at desc'),
+      pool.query('select * from audits order by created_at desc')
+    ]);
+    res.json({ items: i.rows.map(rowToItem), transactions: t.rows.map(rowToTx), audits: a.rows.map(rowToAudit) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/transactions', requireAuth, async (req, res) => {
+  const t = req.body || {};
+  try {
+    await pool.query(
+      `insert into transactions (id,date,type,item_id,quantity,issuer,receiver,note,unit_price,amount,created_by,created_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,coalesce($12::timestamptz,now()))`,
+      [t.id, t.date, t.type, t.itemId, t.quantity, t.issuer || '', t.receiver || '', t.note || '', t.unitPrice || 0, t.amount || 0, t.createdBy || '', t.createdAt || null]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.patch('/api/transactions/:id', requireAuth, async (req, res) => {
+  const t = req.body || {};
+  try {
+    await pool.query(
+      `update transactions set date=$2,type=$3,item_id=$4,quantity=$5,issuer=$6,receiver=$7,note=$8,unit_price=$9,amount=$10,created_by=$11 where id=$1`,
+      [req.params.id, t.date, t.type, t.itemId, t.quantity, t.issuer || '', t.receiver || '', t.note || '', t.unitPrice || 0, t.amount || 0, t.createdBy || '']
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
+  try { await pool.query('delete from transactions where id=$1', [req.params.id]); res.json({ ok: true }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/items/:id', requireAuth, async (req, res) => {
+  const b = req.body || {};
+  try {
+    await pool.query(
+      `update items set unit_price=coalesce($2,unit_price), safety_stock=coalesce($3,safety_stock), updated_at=now() where id=$1`,
+      [req.params.id, (b.unitPrice ?? null), (b.safetyStock ?? null)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/audits', requireAuth, async (req, res) => {
+  const a = req.body || {};
+  try {
+    await pool.query(
+      `insert into audits (id,date,inspector,item_id,system_qty,counted_qty,diff_qty,note,image_data,created_by,created_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,coalesce($11::timestamptz,now()))`,
+      [a.id, a.date, a.inspector, a.itemId, a.systemQty, a.countedQty, a.diffQty, a.note || '', a.imageData || '', a.createdBy || '', a.createdAt || null]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/logs', requireAuth, async (req, res) => {
+  const l = req.body || {};
+  try {
+    await pool.query('insert into activity_logs (actor,action,target,detail) values ($1,$2,$3,$4)', [l.actor || '', l.action || '', l.target || '', l.detail ? JSON.stringify(l.detail) : null]);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// 초기화/복원 — 트랜잭션으로 통째 교체
+app.post('/api/replace-all', requireAuth, async (req, res) => {
+  const { items = [], transactions = [], audits = [] } = req.body || {};
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query('delete from audits');
+    await client.query('delete from transactions');
+    for (const it of items) {
+      await client.query(
+        `insert into items (id,category,name,size,unit_price,initial_stock,safety_stock) values ($1,$2,$3,$4,$5,$6,$7)
+         on conflict (id) do update set category=excluded.category,name=excluded.name,size=excluded.size,unit_price=excluded.unit_price,initial_stock=excluded.initial_stock,safety_stock=excluded.safety_stock`,
+        [it.id, it.category, it.name, it.size, it.unitPrice || 0, it.initialStock || 0, it.safetyStock || 0]
+      );
+    }
+    for (const t of transactions) {
+      await client.query(
+        `insert into transactions (id,date,type,item_id,quantity,issuer,receiver,note,unit_price,amount,created_by,created_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,coalesce($12::timestamptz,now()))`,
+        [t.id, t.date, t.type, t.itemId, t.quantity, t.issuer || '', t.receiver || '', t.note || '', t.unitPrice || 0, t.amount || 0, t.createdBy || '', t.createdAt || null]
+      );
+    }
+    for (const a of audits) {
+      await client.query(
+        `insert into audits (id,date,inspector,item_id,system_qty,counted_qty,diff_qty,note,image_data,created_by,created_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,coalesce($11::timestamptz,now()))`,
+        [a.id, a.date, a.inspector, a.itemId, a.systemQty, a.countedQty, a.diffQty, a.note || '', a.imageData || '', a.createdBy || '', a.createdAt || null]
+      );
+    }
+    await client.query('commit');
+    res.json({ ok: true });
+  } catch (e) { await client.query('rollback'); res.status(400).json({ error: e.message }); }
+  finally { client.release(); }
+});
+
+app.get('/api/health', async (req, res) => {
+  try { await pool.query('select 1'); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 정적 프론트엔드 (public/ 만 노출)
+app.use(express.static(PUBLIC_DIR));
+app.get('*', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
+
+app.listen(PORT, () => console.log(`[server] http://localhost:${PORT}  schema=${DB_SCHEMA}`));
