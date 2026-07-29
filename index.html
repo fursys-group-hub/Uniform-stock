@@ -26,6 +26,7 @@
       </nav>
 
       <div class="side-actions">
+        <div id="syncBadge" class="sync-badge">● 연결 확인 중…</div>
         <button id="seedBtn" class="ghost-btn">초기 데이터 다시 넣기</button>
         <button id="backupBtn" class="ghost-btn">백업 다운로드</button>
         <label class="ghost-btn file-label">
@@ -392,6 +393,8 @@
     </article>
   </template>
 
-  <script src="./app.js?v=7"></script>
+  <script src="./config.js"></script>
+  <script src="./vendor/supabase.js"></script>
+  <script src="./app.js?v=9"></script>
 </body>
 </html>

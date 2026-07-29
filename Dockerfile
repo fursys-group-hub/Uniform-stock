@@ -1,6 +1,7 @@
 FROM nginx:alpine
 
 COPY index.html app.js styles.css /usr/share/nginx/html/
+COPY vendor/ /usr/share/nginx/html/vendor/
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 

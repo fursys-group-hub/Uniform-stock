@@ -111,13 +111,16 @@ const els = {
   editModalClose: document.getElementById('editModalClose')
 };
 
-init();
-
 function init() {
+  supa = initSupabase();
   bindEvents();
   populateItemSelects();
   setDefaultDates();
   renderAll();
+  updateSyncBadge(loadOutbox().length);
+  syncFromSupabase();                       // 비동기: Supabase와 동기화 후 재렌더
+  window.addEventListener('online', flushOutbox);
+  setInterval(flushOutbox, 30000);          // 대기 중인 변경 주기적 재시도
 }
 
 function bindEvents() {
@@ -162,6 +165,165 @@ function makeSeedState() {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+/* ===================== Supabase 연동 (Phase 1) =====================
+ * 설계: Supabase가 단일 진실원본(source of truth), localStorage는 즉시표시용 캐시.
+ * 모든 쓰기는 로컬 반영 후 아웃박스(재시도 큐)에 담겨 Supabase로 전송 → 오프라인/실패에도 유실 없음.
+ * 설정(config.js)이 없으면 기존처럼 localStorage 단독으로 동작한다.
+ */
+const OUTBOX_KEY = 'inventory_outbox_v1';
+let supa = null;
+let syncReady = false;
+let flushing = false;
+
+function initSupabase() {
+  const cfg = window.__CONFIG__ || {};
+  if (!window.supabase || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || cfg.SUPABASE_URL.includes('YOUR-PROJECT')) {
+    console.warn('[sync] Supabase 설정 없음 — 로컬(localStorage) 모드로 동작합니다.');
+    return null;
+  }
+  try {
+    return window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true }
+    });
+  } catch (e) {
+    console.error('[sync] Supabase 초기화 실패', e);
+    return null;
+  }
+}
+
+// ---- camelCase(state) <-> snake_case(DB) 매핑 ----
+function itemToRow(it) {
+  return { id: it.id, category: it.category, name: it.name, size: it.size,
+    unit_price: Number(it.unitPrice || 0), initial_stock: Number(it.initialStock || 0),
+    safety_stock: Number(it.safetyStock || 0) };
+}
+function rowToItem(r) {
+  return { id: r.id, category: r.category, name: r.name, size: r.size,
+    unitPrice: Number(r.unit_price || 0), initialStock: Number(r.initial_stock || 0),
+    safetyStock: Number(r.safety_stock || 0) };
+}
+function txToRow(t) {
+  return { id: t.id, date: t.date, type: t.type, item_id: t.itemId, quantity: Number(t.quantity),
+    issuer: t.issuer || '', receiver: t.receiver || '', note: t.note || '',
+    unit_price: Number(t.unitPrice || 0), amount: Number(t.amount || 0),
+    created_by: t.createdBy || '', created_at: t.createdAt || new Date().toISOString() };
+}
+function rowToTx(r) {
+  return { id: r.id, date: r.date, type: r.type, itemId: r.item_id, quantity: Number(r.quantity),
+    issuer: r.issuer || '', receiver: r.receiver || '', note: r.note || '',
+    unitPrice: Number(r.unit_price || 0), amount: Number(r.amount || 0),
+    createdBy: r.created_by || '', createdAt: r.created_at };
+}
+function auditToRow(a) {
+  return { id: a.id, date: a.date, inspector: a.inspector, item_id: a.itemId,
+    system_qty: Number(a.systemQty), counted_qty: Number(a.countedQty), diff_qty: Number(a.diffQty),
+    note: a.note || '', image_data: a.imageData || '', created_by: a.createdBy || '',
+    created_at: a.createdAt || new Date().toISOString() };
+}
+function rowToAudit(r) {
+  return { id: r.id, date: r.date, inspector: r.inspector, itemId: r.item_id,
+    systemQty: Number(r.system_qty), countedQty: Number(r.counted_qty), diffQty: Number(r.diff_qty),
+    note: r.note || '', imageData: r.image_data || '', createdBy: r.created_by || '',
+    createdAt: r.created_at };
+}
+
+// ---- 아웃박스(오프라인/실패 재시도 큐) ----
+function loadOutbox() {
+  try { return JSON.parse(localStorage.getItem(OUTBOX_KEY)) || []; } catch { return []; }
+}
+function saveOutbox(q) { localStorage.setItem(OUTBOX_KEY, JSON.stringify(q)); }
+function enqueue(op) {
+  if (!supa) return;               // 로컬 모드에선 큐 사용 안 함
+  const q = loadOutbox();
+  q.push(op);
+  saveOutbox(q);
+  updateSyncBadge(q.length);
+  flushOutbox();
+}
+async function flushOutbox() {
+  if (!supa || flushing) return;
+  flushing = true;
+  try {
+    let q = loadOutbox();
+    while (q.length) {
+      const op = q[0];
+      try {
+        await applyOp(op);
+      } catch (e) {
+        console.warn('[sync] 반영 대기(재시도 예정):', op.type, e.message || e);
+        break;                     // 실패 → 순서 보존 위해 중단, 다음 기회에 재시도
+      }
+      q.shift();
+      saveOutbox(q);
+    }
+    updateSyncBadge(loadOutbox().length);
+  } finally {
+    flushing = false;
+  }
+}
+async function applyOp(op) {
+  const t = op.type;
+  if (t === 'upsertItem')       { const { error } = await supa.from('items').upsert(op.row); if (error) throw error; }
+  else if (t === 'insertTx')    { const { error } = await supa.from('transactions').insert(op.row); if (error) throw error; }
+  else if (t === 'updateTx')    { const { error } = await supa.from('transactions').update(op.row).eq('id', op.row.id); if (error) throw error; }
+  else if (t === 'deleteTx')    { const { error } = await supa.from('transactions').delete().eq('id', op.id); if (error) throw error; }
+  else if (t === 'insertAudit') { const { error } = await supa.from('audits').insert(op.row); if (error) throw error; }
+  else if (t === 'replaceAll')  { await applyReplaceAll(op.state); }
+  else { console.warn('[sync] 알 수 없는 op', t); }
+}
+async function applyReplaceAll(snapshot) {
+  // 초기화/복원/최초이관용: DB를 현재 스냅샷으로 재구성
+  const ZERO = '00000000-0000-0000-0000-000000000000';
+  const delA = await supa.from('audits').delete().neq('id', ZERO); if (delA.error) throw delA.error;
+  const delT = await supa.from('transactions').delete().neq('id', ZERO); if (delT.error) throw delT.error;
+  const upI = await supa.from('items').upsert(snapshot.items.map(itemToRow)); if (upI.error) throw upI.error;
+  if (snapshot.transactions.length) { const r = await supa.from('transactions').insert(snapshot.transactions.map(txToRow)); if (r.error) throw r.error; }
+  if (snapshot.audits.length)       { const r = await supa.from('audits').insert(snapshot.audits.map(auditToRow)); if (r.error) throw r.error; }
+}
+
+// ---- 최초 로드 시 Supabase와 동기화 ----
+async function syncFromSupabase() {
+  if (!supa) { updateSyncBadge(0); return; }
+  try {
+    const [iRes, tRes, aRes] = await Promise.all([
+      supa.from('items').select('*'),
+      supa.from('transactions').select('*').order('created_at', { ascending: false }),
+      supa.from('audits').select('*').order('created_at', { ascending: false })
+    ]);
+    if (iRes.error) throw iRes.error;
+    if (tRes.error) throw tRes.error;
+    if (aRes.error) throw aRes.error;
+
+    if ((iRes.data || []).length === 0) {
+      // DB가 비어있음 → 현재 로컬(state: localStorage 또는 seed)을 최초 이관
+      console.info('[sync] DB 비어있음 → 기존 데이터 Supabase로 이관');
+      enqueue({ type: 'replaceAll', state: structuredClone(state) });
+    } else {
+      // DB가 진실원본 → 로컬 state 교체 후 재렌더
+      state = {
+        items: iRes.data.map(rowToItem),
+        transactions: tRes.data.map(rowToTx),
+        audits: aRes.data.map(rowToAudit)
+      };
+      saveState();
+      populateItemSelects();
+      renderAll();
+    }
+    syncReady = true;
+    flushOutbox();
+  } catch (e) {
+    console.error('[sync] Supabase 동기화 실패 — 로컬 데이터로 계속 진행합니다.', e);
+  }
+}
+
+function updateSyncBadge(pending) {
+  const el = document.getElementById('syncBadge');
+  if (!el) return;
+  if (!supa)          { el.textContent = '● 로컬 모드'; el.className = 'sync-badge off'; }
+  else if (pending>0) { el.textContent = `● 동기화 대기 ${pending}`; el.className = 'sync-badge pending'; }
+  else                { el.textContent = '● 동기화됨'; el.className = 'sync-badge ok'; }
 }
 
 function setDefaultDates() {
@@ -303,6 +465,7 @@ function submitTransaction(event) {
     createdAt: new Date().toISOString()
   };
   state.transactions.unshift(tx);
+  enqueue({ type: 'insertTx', row: txToRow(tx) });
   els.transactionForm.reset();
   setDefaultDates();
   syncTransactionItem();
@@ -361,7 +524,9 @@ function onHistoryAction(event) {
   if (delBtn) {
     if (!confirm('이 수불 이력을 삭제할까요? 삭제하면 되돌릴 수 없습니다.')) return;
     if (!verifyAdmin()) return;
-    state.transactions = state.transactions.filter(tx => tx.id !== delBtn.dataset.delTx);
+    const delId = delBtn.dataset.delTx;
+    state.transactions = state.transactions.filter(tx => tx.id !== delId);
+    enqueue({ type: 'deleteTx', id: delId });
     renderAll();
     alert('수불 이력이 삭제되었습니다.');
     return;
@@ -416,6 +581,7 @@ function submitEdit(event) {
   tx.unitPrice = Number(item.unitPrice || 0);
   tx.amount = type === '분출' ? quantity * Number(item.unitPrice || 0) : 0;
 
+  enqueue({ type: 'updateTx', row: txToRow(tx) });
   closeEditModal();
   renderAll();
   alert('수불 이력이 수정되었습니다.');
@@ -468,9 +634,10 @@ async function submitAudit(event) {
     createdAt: new Date().toISOString()
   };
   state.audits.unshift(audit);
+  enqueue({ type: 'insertAudit', row: auditToRow(audit) });
 
   if (diffQty !== 0) {
-    state.transactions.unshift({
+    const adjTx = {
       id: crypto.randomUUID(),
       date: audit.date,
       type: '실사조정',
@@ -482,7 +649,9 @@ async function submitAudit(event) {
       unitPrice: Number(item.unitPrice || 0),
       amount: 0,
       createdAt: new Date().toISOString()
-    });
+    };
+    state.transactions.unshift(adjTx);
+    enqueue({ type: 'insertTx', row: txToRow(adjTx) });
   }
 
   els.auditForm.reset();
@@ -543,6 +712,7 @@ function savePriceInline(event) {
   const input = els.pricingTableBody.querySelector(`[data-price-id="${itemId}"]`);
   const item = getItemById(itemId);
   item.unitPrice = Number(input.value || 0);
+  enqueue({ type: 'upsertItem', row: itemToRow(item) });
 
   // 이미 등록된 이 품목의 거래 내역에도 새 단가를 소급 적용한다.
   // (분출 내역의 청구금액 = 수량 × 새 단가로 다시 계산)
@@ -550,6 +720,7 @@ function savePriceInline(event) {
     if (tx.itemId === itemId) {
       tx.unitPrice = item.unitPrice;
       tx.amount = tx.type === '분출' ? tx.quantity * item.unitPrice : 0;
+      enqueue({ type: 'updateTx', row: txToRow(tx) });
     }
   });
 
@@ -585,6 +756,7 @@ function renderBilling() {
 function resetSeedData() {
   if (!confirm('현재 입력된 데이터를 지우고 초기 재고 상태로 되돌릴까요?')) return;
   state = makeSeedState();
+  enqueue({ type: 'replaceAll', state: structuredClone(state) });
   populateItemSelects();
   setDefaultDates();
   renderAll();
@@ -608,6 +780,7 @@ function restoreBackup(event) {
     try {
       state = JSON.parse(reader.result);
       saveState();
+      enqueue({ type: 'replaceAll', state: structuredClone(state) });
       populateItemSelects();
       setDefaultDates();
       renderAll();
@@ -845,6 +1018,7 @@ function saveSafetyInline(event) {
   const input = els.reorderTableBody.querySelector(`[data-safety-id="${itemId}"]`);
   const item = getItemById(itemId);
   item.safetyStock = Number(input.value || 0);
+  enqueue({ type: 'upsertItem', row: itemToRow(item) });
   renderAll();
   alert('안전재고가 저장되었습니다.');
 }
@@ -949,3 +1123,6 @@ function compressImage(file) {
     reader.readAsDataURL(file);
   });
 }
+
+// 모든 최상위 선언이 초기화된 뒤 앱을 시작한다 (TDZ 방지)
+init();
