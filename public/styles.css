@@ -1,23 +1,29 @@
 :root {
-  --bg: #f5f7fb;
+  /* 시공팀 대시보드와 통일: 연두/초록 브랜드 팔레트 */
+  --bg: #eef2f0;
   --surface: #ffffff;
-  --surface-soft: #f0f4ff;
-  --primary: #2563eb;
-  --primary-soft: #dbeafe;
-  --text: #0f172a;
+  --surface-soft: #f0fdf4;
+  --primary: #16a34a;
+  --primary-deep: #15803d;
+  --primary-soft: #dcfce7;
+  --primary-line: #bbf7d0;
+  --text: #0f2419;
   --muted: #64748b;
-  --line: #dbe3ef;
+  --line: #e2e8f0;
   --danger: #dc2626;
   --success: #16a34a;
-  --warning: #d97706;
-  --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  --warning: #ea580c;
+  --shadow: 0 10px 30px rgba(16, 64, 40, 0.10);
 }
 
 * { box-sizing: border-box; }
 body {
   margin: 0;
   font-family: "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 600px at 100% -10%, #d1fae5 0%, transparent 55%),
+    radial-gradient(900px 500px at -10% 110%, #dcfce7 0%, transparent 50%),
+    var(--bg);
   color: var(--text);
 }
 
@@ -32,7 +38,7 @@ button, input, select, textarea {
 }
 
 .sidebar {
-  background: #0f172a;
+  background: linear-gradient(180deg, #14532d 0%, #0f2419 100%);
   color: #fff;
   padding: 28px 20px;
   display: flex;
@@ -42,7 +48,9 @@ button, input, select, textarea {
 
 .brand h1 {
   margin: 0 0 6px;
-  font-size: 24px;
+  font-size: 18px;
+  line-height: 1.3;
+  letter-spacing: -.3px;
 }
 
 .brand p {
@@ -54,8 +62,18 @@ button, input, select, textarea {
 .nav-tabs {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
 }
+
+.nav-group {
+  font-size: 11px;
+  font-weight: 700;
+  color: #86efac;
+  letter-spacing: .3px;
+  padding: 12px 6px 4px;
+  text-transform: none;
+}
+.nav-group:first-child { padding-top: 2px; }
 
 .tab-btn, .ghost-btn, .primary-btn {
   border: 0;
@@ -116,7 +134,7 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1e293b, #0f172a);
+  background: linear-gradient(135deg, #0f2419, #14532d);
   padding: 20px;
 }
 /* hidden 속성이 확실히 숨기도록(display:flex 보다 우선) */
@@ -132,7 +150,7 @@ button, input, select, textarea {
   flex-direction: column;
   gap: 14px;
 }
-.login-card h1 { margin: 0; font-size: 22px; color: var(--text); }
+.login-card h1 { margin: 0; font-size: 19px; color: var(--primary-deep); letter-spacing: -.3px; }
 .login-desc { margin: 0 0 6px; color: var(--muted); font-size: 14px; }
 .login-card label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
 .login-card input {
@@ -149,6 +167,20 @@ button, input, select, textarea {
   padding: 9px 12px;
   font-size: 13px;
 }
+.login-divider {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--muted); font-size: 12px; margin: 4px 0 2px;
+}
+.login-divider::before, .login-divider::after {
+  content: ""; flex: 1; height: 1px; background: var(--line);
+}
+.dash-link {
+  display: block; text-align: center; text-decoration: none;
+  border: 1.5px solid var(--primary-line); color: var(--primary-deep);
+  background: var(--primary-soft); border-radius: 12px; padding: 12px;
+  font-size: 14px; font-weight: 700; transition: background .15s;
+}
+.dash-link:hover { background: var(--primary-line); }
 
 .content {
   padding: 28px;
@@ -180,7 +212,7 @@ button, input, select, textarea {
 
 .mini-stat, .summary-card {
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 1px solid var(--primary-line);
   border-radius: 16px;
   box-shadow: var(--shadow);
 }
@@ -217,8 +249,9 @@ button, input, select, textarea {
 
 .summary-card {
   padding: 18px;
-  background: linear-gradient(180deg, #fff, #f8fbff);
+  background: linear-gradient(180deg, #fff, #f0fdf4);
 }
+.summary-card span { color: var(--primary-deep); font-weight: 700; }
 
 .panel {
   background: var(--surface);
@@ -290,12 +323,13 @@ input[readonly] {
 }
 
 .primary-btn {
-  background: var(--primary);
+  background: linear-gradient(135deg, #22c55e 0%, var(--primary) 100%);
   color: #fff;
   padding: 12px 18px;
+  box-shadow: 0 8px 20px rgba(22, 163, 74, .28);
 }
 
-.primary-btn:hover { filter: brightness(.95); }
+.primary-btn:hover { filter: brightness(1.03); transform: translateY(-1px); }
 
 .table-wrap {
   overflow: auto;

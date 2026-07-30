@@ -3,37 +3,48 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>재고관리 MVP</title>
-  <link rel="stylesheet" href="./styles.css?v=8" />
+  <title>LETUS 시공팀 유니폼 재고관리</title>
+  <link rel="stylesheet" href="./styles.css?v=10" />
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay" hidden>
     <form id="loginForm" class="login-card">
-      <h1>재고관리 로그인</h1>
-      <p class="login-desc">관리자만 등록·수정할 수 있습니다.</p>
+      <h1>LETUS 시공팀 유니폼 재고관리</h1>
+      <p class="login-desc">본사 관리자 로그인 — 등록·수정은 관리자만 가능합니다.</p>
       <label><span>관리자명</span><input type="text" name="operator" placeholder="예: 정유선" autocomplete="off" required /></label>
       <label><span>비밀번호</span><input type="password" name="password" placeholder="비밀번호" required /></label>
       <div id="loginError" class="login-error" hidden></div>
       <button type="submit" class="primary-btn login-btn">로그인</button>
+      <div class="login-divider"><span>또는</span></div>
+      <a href="./request" class="dash-link">📊 유니폼 재고 현황 확인 (로그인 없이)</a>
     </form>
   </div>
 
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
-        <h1>재고관리 MVP</h1>
-        <p>재고 · 수불 · 실사 · 청구</p>
+        <h1>LETUS 시공팀<br>유니폼 재고관리</h1>
+        <p>재고 · 수불 · 실사 · 정산</p>
       </div>
 
       <nav class="nav-tabs" id="navTabs">
+        <div class="nav-group">📊 현황</div>
         <button class="tab-btn active" data-tab="dashboard">재고 현황</button>
+        <button class="tab-btn" data-tab="analytics">분석 대시보드</button>
+
+        <div class="nav-group">📦 입·출고</div>
         <button class="tab-btn" data-tab="transactions">수불 등록</button>
         <button class="tab-btn" data-tab="history">수불 이력</button>
+
+        <div class="nav-group">🔍 실사</div>
         <button class="tab-btn" data-tab="audit">실사 등록</button>
         <button class="tab-btn" data-tab="audit-history">실사 이력</button>
+
+        <div class="nav-group">💰 정산</div>
         <button class="tab-btn" data-tab="pricing">단가 관리</button>
         <button class="tab-btn" data-tab="billing">청구 조회</button>
-        <button class="tab-btn" data-tab="analytics">분석 대시보드</button>
+
+        <div class="nav-group">🗂 기록</div>
         <button class="tab-btn" data-tab="activity">활동 로그</button>
       </nav>
 
