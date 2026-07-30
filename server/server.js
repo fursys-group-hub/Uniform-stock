@@ -28,6 +28,9 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 // JWT 서명 키: 환경변수 우선, 없으면 프로세스 시작 시 무작위 생성(하드코딩 비밀 없음).
 const JWT_SECRET = process.env.JWT_SECRET || randomBytes(32).toString('hex');
 const PORT = Number(process.env.PORT || 3000);
+// 시공팀 공개 대시보드용
+const SLACK_REQUEST_WEBHOOK = process.env.SLACK_REQUEST_WEBHOOK || '';
+const PRICE_PASSWORD = process.env.PRICE_PASSWORD || '';
 
 if (!DATABASE_URL) { console.error('[server] DATABASE_URL 이 없습니다.'); process.exit(1); }
 
@@ -76,12 +79,42 @@ app.post('/api/login', (req, res) => {
   res.json({ token });
 });
 
-// 공개: 현재고만 (Phase 3 대시보드용 — 담당자/청구액 비노출)
+// 공개: 현재고만 (대시보드용 — 단가/담당자/청구액 비노출. 단가는 /api/prices 로 분리)
 app.get('/api/stock', async (req, res) => {
   try {
-    const q = await pool.query('select item_id,category,name,size,unit_price,safety_stock,current_stock from current_stock order by category,name,size');
-    res.json(q.rows.map((r) => ({ itemId: r.item_id, category: r.category, name: r.name, size: r.size, unitPrice: Number(r.unit_price || 0), safetyStock: Number(r.safety_stock || 0), currentStock: Number(r.current_stock || 0) })));
+    const q = await pool.query('select item_id,category,name,size,safety_stock,current_stock from current_stock order by category,name,size');
+    res.json(q.rows.map((r) => ({ itemId: r.item_id, category: r.category, name: r.name, size: r.size, safetyStock: Number(r.safety_stock || 0), currentStock: Number(r.current_stock || 0) })));
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 단가 조회 — 비밀번호 필요(공개 API에 단가를 싣지 않기 위해 분리). UI 잠금이 실제 보안이 됨.
+app.post('/api/prices', async (req, res) => {
+  const { password } = req.body || {};
+  if (!PRICE_PASSWORD) return res.status(500).json({ error: 'price-password-missing' });
+  if (!password || password !== PRICE_PASSWORD) return res.status(401).json({ error: 'invalid' });
+  try {
+    const q = await pool.query('select id,category,name,size,unit_price from items order by category,name,size');
+    res.json(q.rows.map((r) => ({ itemId: r.id, category: r.category, name: r.name, size: r.size, unitPrice: Number(r.unit_price || 0) })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 시공팀 요청 → 슬랙 DM 릴레이 (요청일시는 서버가 한국시간으로 채움)
+app.post('/api/uniform-request', async (req, res) => {
+  try {
+    if (!SLACK_REQUEST_WEBHOOK) return res.status(500).json({ error: 'slack-webhook-missing' });
+    const { requester = '', region = '', center = '', items = '' } = req.body || {};
+    if (!center) return res.status(400).json({ error: 'center-required' });
+    const clip = (s, n) => String(s).slice(0, n);
+    const now = new Date(Date.now() + 9 * 3600 * 1000); // KST
+    const p = (n) => String(n).padStart(2, '0');
+    const date = `${now.getUTCFullYear()}.${p(now.getUTCMonth() + 1)}.${p(now.getUTCDate())} ${p(now.getUTCHours())}:${p(now.getUTCMinutes())}`;
+    const r = await fetch(SLACK_REQUEST_WEBHOOK, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, requester: clip(requester, 50), region: clip(region, 50), center: clip(center, 50), items: clip(items, 3000) })
+    });
+    if (!r.ok) throw new Error('slack ' + r.status);
+    res.json({ ok: true });
+  } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 // 관리자: 전체 데이터
@@ -204,7 +237,7 @@ app.get('/api/health', async (req, res) => {
 
 // 정적 프론트엔드 (public/ 만 노출)
 app.use(express.static(PUBLIC_DIR));
-app.get('/dashboard', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'dashboard.html')));
+app.get('/request', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'request.html')));  // 시공팀 공개 대시보드
 app.get('*', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
 
 app.listen(PORT, () => console.log(`[server] http://localhost:${PORT}  schema=${DB_SCHEMA}`));

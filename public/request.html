@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LETUS 시공팀 유니폼 실시간 재고 현황</title>
+<style>
+  :root{
+    /* 메인 컬러: 연두/초록 포인트 */
+    --green:#22c55e; --green-deep:#16a34a; --green-soft:#dcfce7; --green-mint:#86efac;
+    --green-line:#bbf7d0; --green-bg:#f0fdf4;
+    --bg:#eef2f0; --surface:#ffffff; --text:#0f2419; --muted:#64748b;
+    --line:#e2e8f0; --danger:#dc2626; --danger-soft:#fee2e2;
+    --warn:#ea580c; --warn-soft:#ffedd5;
+    --shadow:0 20px 60px rgba(16,64,40,.22);
+  }
+  *{box-sizing:border-box}
+  .hidden{display:none !important}
+  html,body{height:100%}
+  body{
+    margin:0;font-family:"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    color:var(--text);
+    background:
+      radial-gradient(1200px 600px at 100% -10%, #d1fae5 0%, transparent 55%),
+      radial-gradient(900px 500px at -10% 110%, #bbf7d0 0%, transparent 50%),
+      var(--bg);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---- 랜딩(모달 닫았을 때 다시 열기 버튼) ---- */
+  .landing{
+    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;text-align:center;padding:24px;
+  }
+  .landing h2{font-size:22px;margin:0}
+  .landing p{color:var(--muted);margin:0}
+  .open-btn{
+    background:linear-gradient(135deg,var(--green) 0%,var(--green-deep) 100%);
+    color:#fff;border:none;border-radius:14px;padding:15px 26px;font-size:16px;font-weight:700;cursor:pointer;
+    box-shadow:0 10px 24px rgba(22,163,74,.35);transition:transform .15s, box-shadow .15s;
+  }
+  .open-btn:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(22,163,74,.45)}
+
+  /* ---- 모달 ---- */
+  .backdrop{
+    position:fixed;inset:0;background:rgba(6,40,24,.45);backdrop-filter:blur(3px);
+    display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto;z-index:50;
+  }
+  .backdrop.hidden{display:none}
+  .modal{
+    width:min(920px,100%);background:var(--surface);border-radius:22px;box-shadow:var(--shadow);
+    overflow:hidden;margin:auto;animation:pop .28s cubic-bezier(.2,.9,.25,1.1);
+    border:1px solid var(--green-line);
+  }
+  @keyframes pop{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
+
+  .m-head{
+    position:relative;
+    background:linear-gradient(135deg,var(--green-deep) 0%,var(--green) 100%);
+    color:#fff;padding:20px 22px 18px;
+  }
+  .m-head h1{margin:0;font-size:20px;font-weight:800;letter-spacing:-.2px;display:flex;align-items:center;gap:9px}
+  .m-head .meta{margin-top:8px;font-size:12.5px;opacity:.95;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  .live{display:inline-flex;align-items:center;gap:6px;font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;background:#eaffe9;box-shadow:0 0 0 0 rgba(255,255,255,.7);animation:pulse 1.8s infinite}
+  .live.off .dot{background:#fecaca;animation:none}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.6)}70%{box-shadow:0 0 0 7px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
+  .close{
+    position:absolute;top:14px;right:14px;width:34px;height:34px;border-radius:10px;border:none;cursor:pointer;
+    background:rgba(255,255,255,.18);color:#fff;font-size:18px;line-height:1;transition:background .15s;
+  }
+  .close:hover{background:rgba(255,255,255,.34)}
+
+  .m-body{padding:18px 20px 22px}
+
+  /* ---- 탭 ---- */
+  .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:2px solid var(--line)}
+  .tab{
+    background:none;border:none;padding:10px 16px;font-size:14px;font-weight:700;color:var(--muted);cursor:pointer;
+    border-bottom:3px solid transparent;margin-bottom:-2px;transition:color .15s,border-color .15s;font-family:inherit;
+  }
+  .tab:hover{color:var(--green-deep)}
+  .tab.active{color:var(--green-deep);border-bottom-color:var(--green)}
+  .pane.hidden{display:none}
+
+  /* ---- 가격 잠금 화면 ---- */
+  .lock{text-align:center;padding:30px 20px 44px;max-width:370px;margin:0 auto}
+  .lock-ico{font-size:44px;margin-bottom:10px}
+  .lock h3{margin:0 0 6px;font-size:17px}
+  .lock p{margin:0 0 18px;color:var(--muted);font-size:13.5px;line-height:1.6}
+  .lock-input{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;font-size:15px;text-align:center;margin-bottom:12px;font-family:inherit}
+  .lock-input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+  .lock-err{color:var(--danger);font-size:13px;margin-top:12px;min-height:18px;font-weight:600}
+  .shake{animation:shake .32s}
+  @keyframes shake{0%,100%{transform:none}20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}
+
+  .price-note{font-size:12.5px;color:var(--warn);background:var(--warn-soft);border-radius:10px;padding:9px 12px;margin-bottom:12px;line-height:1.5}
+  .price-sum{display:flex;justify-content:center;padding:14px 4px 2px;font-size:13px}
+
+  /* 품목별 단가 카드 그리드 (스크롤 없이 한눈에) */
+  .price-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+  @media(max-width:620px){.price-grid{grid-template-columns:1fr}}
+  .price-card{border:1.5px solid var(--green-line);border-radius:16px;overflow:hidden;background:#fff;display:flex;flex-direction:column}
+  .price-card.wide{grid-column:1 / -1}
+  .pc-head{background:var(--green-bg);color:var(--green-deep);font-weight:800;font-size:12.5px;padding:9px 14px;letter-spacing:.2px;display:flex;align-items:center;gap:6px}
+  .pc-body{display:grid;grid-template-columns:1fr 1fr}
+  .price-card:not(.wide) .pc-body{grid-template-columns:1fr}
+  .pc-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .pc-body>.pc-row:last-child{border-bottom:none}
+  .pc-name{font-size:13.5px;font-weight:600;color:var(--text)}
+  .pc-price{font-size:17px;font-weight:800;color:var(--green-deep);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pc-price em{font-size:12px;font-weight:700;color:var(--muted);font-style:normal;margin-left:2px}
+  .pc-price.none{font-size:13px;font-weight:700;color:#cbd5e1}
+
+  /* ---- 요약 카드 ---- */
+  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+  @media(max-width:620px){.summary{grid-template-columns:1fr}}
+  .card{
+    border:1.5px solid var(--green-line);background:var(--green-bg);border-radius:16px;padding:14px 16px;
+    transition:transform .15s, box-shadow .15s, border-color .15s;
+  }
+  .card .lab{font-size:12.5px;color:var(--green-deep);font-weight:700;display:flex;align-items:center;gap:6px}
+  .card .val{font-size:26px;font-weight:800;margin-top:4px;letter-spacing:-.5px}
+  .card .val small{font-size:14px;font-weight:600;color:var(--muted);margin-left:3px}
+  .card.alert{border-color:#fecaca;background:#fff5f5}
+  .card.alert .lab{color:var(--danger)}
+  .card.clickable{cursor:pointer}
+  .card.clickable:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(16,64,40,.12)}
+  .card.active{outline:3px solid var(--green-mint);outline-offset:1px}
+
+  /* ---- 필터 ---- */
+  .filters{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px}
+  @media(max-width:620px){.filters{grid-template-columns:1fr 1fr}}
+  select,.search{
+    width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:12px;font-size:14px;background:#fff;color:var(--text);
+    appearance:none;transition:border-color .15s, box-shadow .15s;
+  }
+  select:focus,.search:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+  .select-wrap{position:relative}
+  .select-wrap::after{content:"▾";position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;font-size:12px}
+  .search-row{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  .search-row .search{flex:1;min-width:200px}
+  .chk{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;color:var(--muted);cursor:pointer;white-space:nowrap;user-select:none;padding:8px 4px}
+  .chk input{width:17px;height:17px;accent-color:var(--green-deep)}
+
+  /* ---- 테이블 ---- */
+  .table-wrap{border:1px solid var(--line);border-radius:14px;overflow:hidden;max-height:44vh;overflow-y:auto}
+  table{width:100%;border-collapse:collapse}
+  thead th{
+    position:sticky;top:0;background:#f1f7f3;color:var(--green-deep);font-size:12px;font-weight:700;
+    text-align:left;padding:11px 12px;border-bottom:1px solid var(--green-line);z-index:2;
+  }
+  th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+  th.act,td.act{text-align:center}
+  tbody td{padding:11px 12px;font-size:13.5px;border-bottom:1px solid var(--line)}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:var(--green-bg)}
+  .qty{font-weight:800;font-size:15px}
+  .qty.ok{color:var(--green-deep)}
+  .qty.low{color:var(--warn)}
+  .qty.zero{color:var(--danger)}
+  .badge{font-size:11px;padding:3px 9px;border-radius:999px;font-weight:700;white-space:nowrap}
+  .b-ok{background:var(--green-soft);color:var(--green-deep)}
+  .b-low{background:var(--warn-soft);color:var(--warn)}
+  .b-zero{background:var(--danger-soft);color:var(--danger)}
+  .add-btn{
+    border:1.5px solid var(--green-line);background:#fff;color:var(--green-deep);border-radius:9px;
+    padding:5px 10px;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .12s;white-space:nowrap;
+  }
+  .add-btn:hover:not(:disabled){background:var(--green);color:#fff;border-color:var(--green)}
+  .add-btn:disabled{opacity:.4;cursor:not-allowed}
+  .add-btn.in{background:var(--green-deep);color:#fff;border-color:var(--green-deep)}
+  .empty{text-align:center;color:var(--muted);padding:34px 10px;font-size:14px}
+
+  /* ---- 요청 바 ---- */
+  .req-bar{
+    margin-top:16px;border:1.5px dashed var(--green-line);border-radius:16px;background:var(--green-bg);
+    padding:14px 16px;display:none;
+  }
+  .req-bar.show{display:block;animation:pop .2s ease}
+  .req-bar h3{margin:0 0 10px;font-size:14px;color:var(--green-deep);display:flex;align-items:center;gap:7px}
+  .req-list{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+  .req-item{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--green-line);border-radius:11px;padding:8px 10px}
+  .req-item .name{flex:1;font-size:13.5px;font-weight:600}
+  .req-item .name span{color:var(--muted);font-weight:500;font-size:12.5px}
+  .stepper{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .stepper button{width:30px;height:30px;border:none;background:#f8fafc;color:var(--green-deep);font-size:16px;cursor:pointer;font-weight:700}
+  .stepper button:hover{background:var(--green-soft)}
+  .stepper input{width:44px;height:30px;border:none;border-left:1px solid var(--line);border-right:1px solid var(--line);text-align:center;font-size:14px;font-weight:700;color:var(--text)}
+  .stepper input::-webkit-outer-spin-button,.stepper input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .rm{border:none;background:none;color:var(--muted);cursor:pointer;font-size:18px;padding:0 4px}
+  .rm:hover{color:var(--danger)}
+  .req-form{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
+  @media(max-width:620px){.req-form{grid-template-columns:1fr}}
+  .req-form input{width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:11px;font-size:13.5px;font-family:inherit}
+  .req-form #reqCenter{grid-column:1 / -1}
+  .req-form input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+  .req-help{font-size:12px;color:var(--green-deep);background:var(--green-soft);border-radius:9px;padding:8px 11px;margin-bottom:12px}
+  .req-actions{display:flex;gap:10px;flex-wrap:wrap}
+  .btn-primary{
+    flex:1;min-width:160px;background:linear-gradient(135deg,var(--green) 0%,var(--green-deep) 100%);color:#fff;border:none;
+    border-radius:12px;padding:13px 18px;font-size:14.5px;font-weight:800;cursor:pointer;box-shadow:0 8px 20px rgba(22,163,74,.3);transition:transform .12s}
+  .btn-primary:hover{transform:translateY(-1px)}
+  .btn-ghost{background:#fff;border:1.5px solid var(--green-line);color:var(--green-deep);border-radius:12px;padding:13px 16px;font-size:13.5px;font-weight:700;cursor:pointer}
+  .btn-ghost:hover{background:var(--green-soft)}
+
+  /* 요청 담기 플로팅 버튼(모달 하단 고정 느낌) */
+  .req-toggle{
+    margin-top:6px;text-align:center;
+  }
+  .req-toggle button{
+    background:none;border:none;color:var(--green-deep);font-weight:700;font-size:13.5px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;
+  }
+  .count-pill{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--green-deep);color:#fff;font-size:12px;font-weight:800;margin-left:4px}
+
+  .toast{
+    position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);opacity:0;
+    background:var(--green-deep);color:#fff;padding:12px 20px;border-radius:12px;font-size:14px;font-weight:600;
+    box-shadow:0 10px 30px rgba(0,0,0,.25);transition:all .25s;z-index:100;pointer-events:none;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .foot{margin-top:14px;text-align:center;color:var(--muted);font-size:11.5px;line-height:1.7}
+</style>
+</head>
+<body>
+
+<!-- 모달을 닫으면 보이는 랜딩 -->
+<div class="landing" id="landing">
+  <h2>👕 LETUS 시공팀 유니폼 재고</h2>
+  <p>로그인 없이 실시간 재고를 확인하고 본사에 요청할 수 있어요.</p>
+  <button class="open-btn" onclick="openModal()">재고 현황 열기</button>
+</div>
+
+<!-- 재고 현황 모달 -->
+<div class="backdrop" id="backdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="유니폼 재고 현황">
+    <div class="m-head">
+      <button class="close" onclick="closeModal()" aria-label="닫기">✕</button>
+      <h1>👕 LETUS 시공팀 유니폼 실시간 재고 현황</h1>
+      <div class="meta">
+        <span>⏱ 마지막 업데이트: <b id="updatedAt">불러오는 중…</b></span>
+        <span class="live" id="liveTag"><span class="dot"></span> 실시간 연동 중</span>
+      </div>
+    </div>
+
+    <div class="m-body">
+      <!-- 탭 -->
+      <div class="tabs">
+        <button class="tab active" id="tabStock" onclick="switchTab('stock')">📦 재고 현황</button>
+        <button class="tab" id="tabPrice" onclick="switchTab('price')">💰 가격 확인</button>
+      </div>
+
+      <!-- ===== 재고 현황 탭 ===== -->
+      <div id="paneStock" class="pane">
+      <!-- 요약 -->
+      <div class="summary" id="summary"></div>
+
+      <!-- 연계형 드롭다운 -->
+      <div class="filters">
+        <div class="select-wrap"><select id="fCat"><option value="">분류 전체</option></select></div>
+        <div class="select-wrap"><select id="fItem"><option value="">품목 전체</option></select></div>
+        <div class="select-wrap"><select id="fSize"><option value="">사이즈 전체</option></select></div>
+      </div>
+
+      <div class="search-row">
+        <input type="text" id="search" class="search" placeholder="🔍 검색 (예: 동계 셔츠, 105, ㄷㄱ)" autocomplete="off" />
+        <label class="chk"><input type="checkbox" id="onlyStock" /> 재고 있는 품목만</label>
+      </div>
+
+      <!-- 테이블 -->
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>분류</th><th>품목</th><th>사이즈</th>
+              <th class="num">현재 재고</th><th>상태</th><th class="act">요청</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="req-toggle">
+        <button onclick="toggleReq()" id="reqToggleBtn">🧺 요청 목록 보기<span class="count-pill" id="cartCount" style="display:none">0</span></button>
+      </div>
+
+      <!-- 요청 영역 -->
+      <div class="req-bar" id="reqBar">
+        <h3>🧺 본사에 요청할 시공복</h3>
+        <div class="req-list" id="reqList"></div>
+        <div class="req-form">
+          <input type="text" id="reqName" placeholder="요청자 이름 (예: 홍길동)" />
+          <input type="text" id="reqRegion" placeholder="요청 권역 (예: SA 권역, II 권역)" />
+          <input type="text" id="reqCenter" placeholder="받으실 센터 (예: 울산센터)" />
+        </div>
+        <div class="req-help">🚚 유니폼은 적어주신 <b>센터로 가는 간선차량</b>에 태웁니다.</div>
+        <div class="req-actions">
+          <button class="btn-primary" onclick="sendRequest()">📧 본사 담당자에게 요청 보내기</button>
+        </div>
+      </div>
+
+      <div class="foot">
+        본 화면은 <b>조회·요청 전용</b>입니다 · 단가·재고금액 등 민감 정보는 표시하지 않습니다<br>
+        재고 등록·수정은 본사 관리자 시스템에서 처리됩니다
+      </div>
+      </div><!-- /paneStock -->
+
+      <!-- ===== 가격 확인 탭 (비밀번호 잠금) ===== -->
+      <div id="panePrice" class="pane hidden">
+        <div id="priceLock" class="lock">
+          <div class="lock-ico">🔒</div>
+          <h3>가격 확인을 위해 비밀번호를 입력해주세요.</h3>
+          <input type="password" id="pricePw" class="lock-input" placeholder="비밀번호 입력" autocomplete="off" />
+          <button class="btn-primary" style="width:100%" onclick="unlockPrice()">🔓 확인</button>
+          <div class="lock-err" id="priceErr"></div>
+        </div>
+
+        <div id="priceContent" class="hidden">
+          <div class="price-note">💰 <b>유니폼 품목별 단가</b> : 본사 관리자 시스템 등록값과 실시간 연동 됩니다.</div>
+          <div id="priceGrid" class="price-grid"></div>
+          <div class="price-sum" id="priceSum"></div>
+          <div class="foot">단가 등록·수정은 본사 관리자 시스템에서 처리됩니다</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================================
+   설정 — 배포 환경에 맞게 이 두 줄만 바꾸면 됩니다.
+   ========================================================================= */
+const CONFIG = {
+  // 본사 관리자 시스템의 공개 재고 API. 같은 서버에 함께 올리면 '/api/stock' 그대로 사용.
+  // 다른 서버라면 예: 'https://uniform.fursys.com'  (끝에 / 없이)
+  API_BASE: '',
+  // 시공복을 요청할 본사 담당자 이메일
+  HQ_EMAIL: 'yousun_jeong@fursys.com',
+  HQ_NAME: '본사 유니폼 담당자',
+  // 단가 비밀번호는 서버(.env)에서 검증 — 클라이언트에 두지 않음(소스 노출 방지)
+  LOW_THRESHOLD: 10,     // 이 수량 미만이면 '부족' 경고색
+  REFRESH_MS: 30000      // 자동 갱신 주기(ms)
+};
+
+/* 표준 사이즈 그리드 — 이 분류의 모든 품목은 아래 사이즈를 전부 가진다는 규칙.
+   데이터에 없던 사이즈는 자동으로 '재고 0(품절)' 행으로 채워집니다. */
+const SIZE_SETS = {
+  '유니폼 상의': ['90','95','100','105','110','115','120'],           // 5단위
+  '유니폼 하의': ['28','30','32','34','36','38','40','42']            // 2단위
+};
+
+/* 가격 확인 탭 구성 — 사이즈 구분 없이 '품목별' 단가만 한눈에 표시.
+   분류 → 품목 순서대로 나열합니다. */
+const PRICE_ORDER = [
+  ['유니폼 상의', ['조끼','하계 셔츠','동계내피(이너패딩)','동계 셔츠','동계외피(춘추아우터)']],
+  ['유니폼 하의', ['하계 바지','동계 바지']],
+  ['장갑',        ['장갑']],
+  ['시공매트',    ['시공매트']]
+];
+
+/* 내장 카탈로그 — API 연결이 안 될 때 보여줄 기본(초기) 재고.
+   본사 관리자 시스템(app.js)의 seedItems와 동일합니다. */
+const SEED = [
+  {category:'유니폼 상의',name:'조끼',size:'95',stock:5},
+  {category:'유니폼 상의',name:'조끼',size:'105',stock:38},
+  {category:'유니폼 상의',name:'조끼',size:'110',stock:50},
+  {category:'유니폼 상의',name:'조끼',size:'115',stock:60},
+  {category:'유니폼 상의',name:'조끼',size:'120',stock:1},
+  {category:'유니폼 상의',name:'하계 셔츠',size:'90',stock:14},
+  {category:'유니폼 상의',name:'하계 셔츠',size:'95',stock:38},
+  {category:'유니폼 상의',name:'하계 셔츠',size:'105',stock:44},
+  {category:'유니폼 상의',name:'하계 셔츠',size:'110',stock:44},
+  {category:'유니폼 상의',name:'하계 셔츠',size:'115',stock:13},
+  {category:'유니폼 상의',name:'하계 셔츠',size:'120',stock:2},
+  {category:'유니폼 상의',name:'동계 셔츠',size:'90',stock:21},
+  {category:'유니폼 상의',name:'동계 셔츠',size:'95',stock:108},
+  {category:'유니폼 상의',name:'동계 셔츠',size:'100',stock:68},
+  {category:'유니폼 상의',name:'동계 셔츠',size:'105',stock:57},
+  {category:'유니폼 상의',name:'동계 셔츠',size:'110',stock:100},
+  {category:'유니폼 상의',name:'동계 셔츠',size:'115',stock:28},
+  {category:'유니폼 상의',name:'동계 셔츠',size:'120',stock:54},
+  {category:'유니폼 상의',name:'동계외피(춘추아우터)',size:'90',stock:44},
+  {category:'유니폼 상의',name:'동계외피(춘추아우터)',size:'95',stock:83},
+  {category:'유니폼 상의',name:'동계외피(춘추아우터)',size:'100',stock:97},
+  {category:'유니폼 상의',name:'동계외피(춘추아우터)',size:'105',stock:147},
+  {category:'유니폼 상의',name:'동계외피(춘추아우터)',size:'110',stock:79},
+  {category:'유니폼 상의',name:'동계외피(춘추아우터)',size:'115',stock:54},
+  {category:'유니폼 상의',name:'동계외피(춘추아우터)',size:'120',stock:51},
+  {category:'유니폼 상의',name:'동계내피(이너패딩)',size:'90',stock:48},
+  {category:'유니폼 상의',name:'동계내피(이너패딩)',size:'95',stock:93},
+  {category:'유니폼 상의',name:'동계내피(이너패딩)',size:'100',stock:111},
+  {category:'유니폼 상의',name:'동계내피(이너패딩)',size:'105',stock:91},
+  {category:'유니폼 상의',name:'동계내피(이너패딩)',size:'110',stock:88},
+  {category:'유니폼 상의',name:'동계내피(이너패딩)',size:'115',stock:53},
+  {category:'유니폼 상의',name:'동계내피(이너패딩)',size:'120',stock:39},
+  {category:'유니폼 하의',name:'하계 바지',size:'28',stock:24},
+  {category:'유니폼 하의',name:'하계 바지',size:'30',stock:43},
+  {category:'유니폼 하의',name:'동계 바지',size:'28',stock:8},
+  {category:'유니폼 하의',name:'동계 바지',size:'30',stock:45},
+  {category:'유니폼 하의',name:'동계 바지',size:'32',stock:89},
+  {category:'유니폼 하의',name:'동계 바지',size:'34',stock:142},
+  {category:'유니폼 하의',name:'동계 바지',size:'36',stock:88},
+  {category:'유니폼 하의',name:'동계 바지',size:'38',stock:69},
+  {category:'유니폼 하의',name:'동계 바지',size:'40',stock:36},
+  {category:'유니폼 하의',name:'동계 바지',size:'42',stock:12},
+  {category:'장갑',name:'장갑',size:'M',stock:2150},
+  {category:'장갑',name:'장갑',size:'L',stock:300},
+  {category:'시공매트',name:'시공매트',size:'기본',stock:102}
+];
+
+/* ---------- 상태 ---------- */
+let ROWS = [];                 // {category,name,size,stock,key}
+let cart = new Map();          // key -> {row, qty}
+let onlyAlert = false;         // 요약 '품절' 카드 클릭 필터
+let PRICEMAP = null;           // 가격 잠금 해제 시 서버에서 받은 단가 (key -> price)
+
+/* ---------- 유틸 ---------- */
+const $ = (id)=>document.getElementById(id);
+const fmt = (n)=>Number(n||0).toLocaleString('ko-KR');
+const keyOf = (r)=>`${r.category}|${r.name}|${r.size}`;
+
+/* 한글 초성 추출 (검색용) */
+const CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+function chosung(str){
+  let out='';
+  for(const ch of str){
+    const c=ch.charCodeAt(0)-0xAC00;
+    if(c>=0 && c<11172) out+=CHO[Math.floor(c/588)];
+    else out+=ch;
+  }
+  return out;
+}
+
+/* 표준 사이즈 그리드 채우기 — 분류별 모든 품목이 전체 사이즈를 갖도록 보정.
+   없던 사이즈는 stock:0 으로 추가되어 🔴 품절로 표시됩니다.
+   API/내장 데이터 모두에 동일하게 적용하고, 사이즈는 숫자 오름차순으로 정렬합니다. */
+function normalizeGrid(rows){
+  // 원래 등장 순서 기억(분류·품목 표시 순서 유지용)
+  const catIdx=new Map(), nameIdx=new Map();
+  rows.forEach(r=>{
+    if(!catIdx.has(r.category)) catIdx.set(r.category,catIdx.size);
+    const nk=r.category+'|'+r.name;
+    if(!nameIdx.has(nk)) nameIdx.set(nk,nameIdx.size);
+  });
+  // 빈 사이즈 채우기
+  for(const [cat,sizes] of Object.entries(SIZE_SETS)){
+    const names=[...new Set(rows.filter(r=>r.category===cat).map(r=>r.name))];
+    for(const name of names){
+      for(const size of sizes){
+        if(!rows.some(r=>r.category===cat && r.name===name && r.size===size)){
+          rows.push({category:cat,name,size,stock:0,price:0});
+        }
+      }
+    }
+  }
+  // 정렬: 분류(등장순) → 품목(등장순) → 사이즈(숫자 오름차순)
+  const numOf=s=>{const n=parseInt(s,10);return isNaN(n)?9999:n;};
+  rows.sort((a,b)=>{
+    const ca=catIdx.get(a.category)??999, cb=catIdx.get(b.category)??999;
+    if(ca!==cb) return ca-cb;
+    const na=nameIdx.get(a.category+'|'+a.name)??999, nb=nameIdx.get(b.category+'|'+b.name)??999;
+    if(na!==nb) return na-nb;
+    return numOf(a.size)-numOf(b.size);
+  });
+  return rows;
+}
+
+/* ---------- 데이터 로드 ---------- */
+async function load(){
+  const url = (CONFIG.API_BASE||'') + '/api/stock';
+  try{
+    const res = await fetch(url,{cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    ROWS = data.map(r=>({category:r.category,name:r.name,size:r.size,stock:Number(r.currentStock||0),price:Number(r.unitPrice||0)}));
+    setLive(true);
+  }catch(e){
+    ROWS = SEED.map(r=>({...r,price:0}));   // 폴백: 내장 데이터(단가 미등록)
+    setLive(false);
+  }
+  ROWS = normalizeGrid(ROWS);       // 표준 사이즈 그리드 보정(빈 사이즈=재고 0)
+  ROWS.forEach(r=>r.key=keyOf(r));
+  applyPrices();                     // 잠금 해제 상태면 서버에서 받은 단가 다시 적용
+  stampTime();
+  buildCategoryOptions();
+  render();
+  if(priceUnlocked) renderPrice();   // 가격 탭 열려있으면 최신 단가로 갱신
+}
+
+// 서버에서 받은 단가(PRICEMAP)를 현재 ROWS 에 적용
+function applyPrices(){
+  if(!PRICEMAP) return;
+  ROWS.forEach(r=>{ r.price = PRICEMAP[keyOf(r)] || 0; });
+}
+
+function setLive(on){
+  const tag = $('liveTag');
+  if(on){ tag.classList.remove('off'); tag.innerHTML='<span class="dot"></span> 실시간 연동 중'; }
+  else  { tag.classList.add('off');    tag.innerHTML='<span class="dot"></span> 내장 데이터 표시 중'; }
+}
+function stampTime(){
+  const t=new Date();
+  const p=(n)=>String(n).padStart(2,'0');
+  $('updatedAt').textContent =
+    `${t.getFullYear()}.${p(t.getMonth()+1)}.${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
+}
+
+/* ---------- 상태 판정 ---------- */
+function statusOf(stock){
+  if(stock<=0)                    return {cls:'zero',qcls:'zero',badge:'<span class="badge b-zero">🔴 품절</span>'};
+  if(stock<CONFIG.LOW_THRESHOLD)  return {cls:'low', qcls:'low', badge:'<span class="badge b-low">🟠 부족</span>'};
+  return {cls:'ok',qcls:'ok',badge:'<span class="badge b-ok">🟢 여유</span>'};
+}
+
+/* ---------- 연계형 드롭다운 ---------- */
+function buildCategoryOptions(){
+  const cats=[...new Set(ROWS.map(r=>r.category))];
+  fill($('fCat'),'분류 전체',cats,$('fCat').value);
+  buildItemOptions(); buildSizeOptions();
+}
+function buildItemOptions(){
+  const cat=$('fCat').value;
+  const items=[...new Set(ROWS.filter(r=>!cat||r.category===cat).map(r=>r.name))];
+  fill($('fItem'),'품목 전체',items,$('fItem').value);
+}
+function buildSizeOptions(){
+  const cat=$('fCat').value, item=$('fItem').value;
+  const sizes=[...new Set(ROWS.filter(r=>(!cat||r.category===cat)&&(!item||r.name===item)).map(r=>r.size))];
+  fill($('fSize'),'사이즈 전체',sizes,$('fSize').value);
+}
+function fill(sel,allLabel,values,keep){
+  const cur = values.includes(keep) ? keep : '';
+  sel.innerHTML = `<option value="">${allLabel}</option>` + values.map(v=>`<option value="${v}">${v}</option>`).join('');
+  sel.value = cur;
+}
+
+/* ---------- 렌더 ---------- */
+function render(){
+  const cat=$('fCat').value, item=$('fItem').value, size=$('fSize').value;
+  const kw=$('search').value.trim();
+  const kwCho=chosung(kw);
+  const onlyStock=$('onlyStock').checked;
+
+  let list = ROWS.filter(r=>{
+    if(cat && r.category!==cat) return false;
+    if(item && r.name!==item) return false;
+    if(size && r.size!==size) return false;
+    if(onlyStock && r.stock<=0) return false;
+    if(onlyAlert && r.stock>=CONFIG.LOW_THRESHOLD) return false;
+    if(kw){
+      const hay=`${r.category} ${r.name} ${r.size}`;
+      const hit = hay.includes(kw) || chosung(hay).includes(kwCho);
+      if(!hit) return false;
+    }
+    return true;
+  });
+
+  renderSummary(list);
+
+  const tb=$('tbody');
+  if(!list.length){ tb.innerHTML=`<tr><td colspan="6" class="empty">조건에 맞는 품목이 없습니다.</td></tr>`; return; }
+
+  tb.innerHTML = list.map(r=>{
+    const s=statusOf(r.stock);
+    const inCart = cart.has(r.key);
+    const disabled = r.stock<=0 && !inCart;
+    return `<tr>
+      <td>${r.category}</td>
+      <td>${r.name}</td>
+      <td>${r.size}</td>
+      <td class="num"><span class="qty ${s.qcls}">${fmt(r.stock)}</span></td>
+      <td>${s.badge}</td>
+      <td class="act">
+        <button class="add-btn ${inCart?'in':''}" ${disabled?'disabled':''}
+          onclick="addToCart('${encodeURIComponent(r.key)}')">${inCart?'담김 ✓':'＋ 요청'}</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function renderSummary(list){
+  const totalItems=list.length;
+  const totalQty=list.reduce((a,r)=>a+Math.max(0,r.stock),0);
+  const zero=list.filter(r=>r.stock<=0).length;
+  const low=list.filter(r=>r.stock>0 && r.stock<CONFIG.LOW_THRESHOLD).length;
+  $('summary').innerHTML = `
+    <div class="card">
+      <div class="lab">📦 전체 품목 수</div>
+      <div class="val">${fmt(totalItems)}<small>개</small></div>
+    </div>
+    <div class="card">
+      <div class="lab">👕 총 여유 재고</div>
+      <div class="val">${fmt(totalQty)}<small>벌</small></div>
+    </div>
+    <div class="card alert clickable ${onlyAlert?'active':''}" onclick="toggleAlertFilter()">
+      <div class="lab">🚨 부족·품절</div>
+      <div class="val">${fmt(low+zero)}<small>건 (클릭 필터)</small></div>
+    </div>`;
+}
+
+/* ---------- 요약 '부족·품절' 클릭 필터 ---------- */
+function toggleAlertFilter(){ onlyAlert=!onlyAlert; render(); }
+
+/* ---------- 장바구니(요청) ---------- */
+function addToCart(encKey){
+  const key=decodeURIComponent(encKey);
+  const row=ROWS.find(r=>r.key===key);
+  if(!row) return;
+  if(cart.has(key)){ cart.delete(key); toast('요청 목록에서 제외했습니다'); }
+  else { cart.set(key,{row,qty:1}); toast('요청 목록에 담았습니다'); $('reqBar').classList.add('show'); }
+  renderCart(); render();
+}
+function changeQty(encKey,delta,abs){
+  const key=decodeURIComponent(encKey);
+  const it=cart.get(key); if(!it) return;
+  if(abs!=null) it.qty=Math.max(1,parseInt(abs,10)||1);
+  else it.qty=Math.max(1,it.qty+delta);
+  renderCart();
+}
+function removeItem(encKey){
+  cart.delete(decodeURIComponent(encKey));
+  renderCart(); render();
+}
+function renderCart(){
+  const n=cart.size;
+  const pill=$('cartCount');
+  pill.style.display = n?'inline-flex':'none';
+  pill.textContent=n;
+  const list=$('reqList');
+  if(!n){ list.innerHTML=`<div style="color:var(--muted);font-size:13px;padding:4px 2px">아직 담은 품목이 없습니다. 표에서 <b>＋ 요청</b>을 눌러 담아주세요.</div>`; return; }
+  list.innerHTML=[...cart.entries()].map(([key,it])=>{
+    const ek=encodeURIComponent(key);
+    return `<div class="req-item">
+      <div class="name">${it.row.name} <span>· ${it.row.category} · ${it.row.size} (재고 ${fmt(it.row.stock)})</span></div>
+      <div class="stepper">
+        <button onclick="changeQty('${ek}',-1)">−</button>
+        <input type="number" min="1" value="${it.qty}" onchange="changeQty('${ek}',0,this.value)"/>
+        <button onclick="changeQty('${ek}',1)">＋</button>
+      </div>
+      <button class="rm" onclick="removeItem('${ek}')" title="삭제">✕</button>
+    </div>`;
+  }).join('');
+}
+function toggleReq(){ $('reqBar').classList.toggle('show'); }
+
+/* ---------- 요청 전송 ---------- */
+function buildRequestText(){
+  const name=$('reqName').value.trim()||'(이름 미입력)';
+  const region=$('reqRegion').value.trim()||'(권역 미입력)';
+  const center=$('reqCenter').value.trim()||'(센터 미입력)';
+  const now=new Date();
+  const stamp=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`;
+  let lines=[];
+  lines.push('[시공팀 유니폼 요청]');
+  lines.push(`요청일: ${stamp}`);
+  lines.push(`요청자: ${name}`);
+  lines.push(`요청 권역: ${region}`);
+  lines.push(`받으실 센터: ${center}  (해당 센터行 간선차량으로 발송)`);
+  lines.push('');
+  lines.push('요청 품목');
+  lines.push('─────────────────────────────');
+  let i=1;
+  for(const [,it] of cart){
+    lines.push(`${i++}. ${it.row.category} · ${it.row.name} · ${it.row.size}  →  ${it.qty}벌 (현재고 ${it.row.stock})`);
+  }
+  lines.push('─────────────────────────────');
+  return lines.join('\n');
+}
+function validateCart(){
+  if(!cart.size){ toast('요청할 품목을 먼저 담아주세요'); $('reqBar').classList.add('show'); return false; }
+  if(!$('reqCenter').value.trim()){ toast('받으실 센터를 입력해주세요'); $('reqCenter').focus(); return false; }
+  return true;
+}
+async function sendRequest(){
+  if(!validateCart()) return;
+  // 요청 품목: "품명 - 사이즈 - 수량벌" 순서
+  const items=[...cart.values()]
+    .map(it=>`- ${it.row.name} - ${it.row.size} - ${it.qty}벌`)
+    .join('\n');
+  const payload={
+    requester: $('reqName').value.trim() || '(이름 미입력)',
+    region:    $('reqRegion').value.trim() || '(권역 미입력)',
+    center:    $('reqCenter').value.trim(),
+    items
+  };
+  try{
+    const res=await fetch((CONFIG.API_BASE||'')+'/api/uniform-request',{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    toast('본사 담당자 슬랙으로 요청을 보냈습니다 ✅');
+    cart.clear(); renderCart(); render();
+    $('reqBar').classList.remove('show');
+  }catch(e){
+    // 서버/슬랙이 막혀도 요청이 사라지지 않도록 메일로 폴백
+    toast('슬랙 전송 실패 — 메일 앱으로 대신 보냅니다');
+    const body=buildRequestText();
+    const subj=`[시공팀 유니폼 요청] ${payload.region} ${payload.center}`.trim();
+    window.location.href=`mailto:${CONFIG.HQ_EMAIL}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+  }
+}
+
+/* ---------- 탭 전환 ---------- */
+let priceUnlocked=false;
+function switchTab(name){
+  const isStock = name==='stock';
+  $('tabStock').classList.toggle('active',isStock);
+  $('tabPrice').classList.toggle('active',!isStock);
+  $('paneStock').classList.toggle('hidden',!isStock);
+  $('panePrice').classList.toggle('hidden',isStock);
+  if(!isStock){
+    if(priceUnlocked){ $('priceLock').classList.add('hidden'); $('priceContent').classList.remove('hidden'); renderPrice(); }
+    else { $('priceLock').classList.remove('hidden'); $('priceContent').classList.add('hidden'); setTimeout(()=>$('pricePw').focus(),60); }
+  }
+}
+
+/* ---------- 가격 잠금 해제 ---------- */
+async function unlockPrice(){
+  const pw = $('pricePw').value;
+  try{
+    const res = await fetch((CONFIG.API_BASE||'')+'/api/prices',{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password:pw})
+    });
+    if(res.status===401) throw new Error('invalid');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    PRICEMAP = {};
+    data.forEach(r=>{ PRICEMAP[`${r.category}|${r.name}|${r.size}`] = Number(r.unitPrice||0); });
+    priceUnlocked=true;
+    $('priceErr').textContent='';
+    $('pricePw').value='';
+    $('priceLock').classList.add('hidden');
+    $('priceContent').classList.remove('hidden');
+    applyPrices();
+    renderPrice();
+    toast('가격 정보를 확인합니다');
+  }catch(e){
+    $('priceErr').textContent='비밀번호가 올바르지 않습니다.';
+    const box=$('priceLock'); box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
+    $('pricePw').select();
+  }
+}
+
+/* ---------- 품목별 단가 카드 렌더 (스크롤 없이 한눈에) ---------- */
+const CAT_ICON={'유니폼 상의':'👕','유니폼 하의':'👖','장갑':'🧤','시공매트':'🟩'};
+function renderPrice(){
+  let html='', anyPrice=false;
+  for(const [cat,names] of PRICE_ORDER){
+    const rows=[];
+    for(const name of names){
+      const group=ROWS.filter(r=>r.category===cat && r.name===name);
+      if(!group.length) continue;
+      const price=Math.max(0,...group.map(r=>Number(r.price)||0));  // 사이즈 무관 대표 단가
+      if(price>0) anyPrice=true;
+      const priceHtml = price>0
+        ? `<span class="pc-price">${fmt(price)}<em>원</em></span>`
+        : `<span class="pc-price none">미등록</span>`;
+      rows.push(`<div class="pc-row"><span class="pc-name">${name}</span>${priceHtml}</div>`);
+    }
+    if(rows.length){
+      const wide = names.length>=4 ? ' wide' : '';
+      html += `<div class="price-card${wide}">
+        <div class="pc-head">${CAT_ICON[cat]||'•'} ${cat}</div>
+        <div class="pc-body">${rows.join('')}</div>
+      </div>`;
+    }
+  }
+  $('priceGrid').innerHTML = html || `<div class="empty">표시할 품목이 없습니다.</div>`;
+  $('priceSum').innerHTML = anyPrice ? ''
+    : `<span style="color:var(--muted);font-weight:600">단가가 아직 등록되지 않았습니다 · 본사 관리자 시스템에서 단가 입력 시 자동 표시됩니다</span>`;
+}
+
+/* ---------- 모달 ---------- */
+function openModal(){ $('backdrop').classList.remove('hidden'); }
+function closeModal(){
+  $('backdrop').classList.add('hidden');
+  priceUnlocked=false;      // 닫으면 가격 탭 다시 잠금
+  PRICEMAP=null;            // 캐시된 단가도 비워 다음엔 비밀번호 재확인
+  switchTab('stock');
+}
+
+/* ---------- 토스트 ---------- */
+let toastTimer;
+function toast(msg){
+  const t=$('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2200);
+}
+
+/* ---------- 이벤트 ---------- */
+$('fCat').addEventListener('change',()=>{ $('fItem').value=''; $('fSize').value=''; buildItemOptions(); buildSizeOptions(); render(); });
+$('fItem').addEventListener('change',()=>{ $('fSize').value=''; buildSizeOptions(); render(); });
+$('fSize').addEventListener('change',render);
+$('search').addEventListener('input',render);
+$('onlyStock').addEventListener('change',render);
+$('pricePw').addEventListener('keydown',(e)=>{ if(e.key==='Enter') unlockPrice(); });
+$('backdrop').addEventListener('click',(e)=>{ if(e.target===$('backdrop')) closeModal(); });
+document.addEventListener('keydown',(e)=>{ if(e.key==='Escape') closeModal(); });
+
+/* ---------- 시작 ---------- */
+renderCart();
+load();
+setInterval(load, CONFIG.REFRESH_MS);
+</script>
+</body>
+</html>
