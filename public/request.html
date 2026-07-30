@@ -441,8 +441,8 @@ function buildRequestText(){
   const name=$('reqName').value.trim()||'(이름 미입력)',region=$('reqRegion').value.trim()||'(권역 미입력)',center=$('reqCenter').value.trim()||'(센터 미선택)';
   const now=new Date(),p=n=>String(n).padStart(2,'0');
   const stamp=`${now.getFullYear()}.${p(now.getMonth()+1)}.${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())}`;
-  let l=['[시공팀 유니폼 요청]',`요청일시: ${stamp}`,`요청자: ${name}`,`요청 권역: ${region}`,`받으실 센터: ${center}`,'','요청 품목','─────────────────────────────'];
-  let i=1;for(const [,it] of cart) l.push(`${i++}. ${it.row.name} - ${it.row.size} - ${it.qty}벌 (현재고 ${it.row.stock})`);
+  let l=['[시공팀 유니폼 요청]',`요청일시: ${stamp}`,`요청자: ${name}`,`요청 권역: ${region}`,`받으실 센터: ${center}`,'','📦 주문품목','─────────────────────────────'];
+  let i=1;for(const [,it] of cart) l.push(`${i++}. ${it.row.name} - ${it.row.size} - ${it.qty}EA (현재고 ${it.row.stock})`);
   l.push('─────────────────────────────');return l.join('\n');
 }
 function validateCart(){
@@ -452,7 +452,8 @@ function validateCart(){
 }
 async function sendRequest(){
   if(!validateCart())return;
-  const items=[...cart.values()].map(it=>`- ${it.row.name} - ${it.row.size} - ${it.qty}벌`).join('\n');
+  const lines=[...cart.values()].map(it=>`- ${it.row.name} - ${it.row.size} - ${it.qty}EA`).join('\n');
+  const items=`📦 주문품목\n\n${lines}`;
   const payload={requester:$('reqName').value.trim()||'(이름 미입력)',region:$('reqRegion').value.trim()||'(권역 미입력)',center:$('reqCenter').value.trim(),items};
   try{
     const res=await fetch((CONFIG.API_BASE||'')+'/api/uniform-request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
