@@ -331,6 +331,19 @@ input[readonly] {
 
 .primary-btn:hover { filter: brightness(1.03); transform: translateY(-1px); }
 
+.export-btn {
+  border: 1.5px solid var(--primary-line);
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.export-btn:hover { background: var(--primary-line); }
+
 .table-wrap {
   overflow: auto;
 }
@@ -445,6 +458,241 @@ tr:hover td {
   text-align: center;
   color: var(--muted);
 }
+
+/* ===== 접기/펴기 + 페이저 ===== */
+.panel-head .head-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 14px 4px 4px;
+}
+
+.pager .pager-info {
+  font-size: 13px;
+  color: var(--muted);
+  min-width: 120px;
+  text-align: center;
+}
+
+.mini-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* ===== 재고현황 탭 개선 ===== */
+.badge.warn { background: #ffedd5; color: var(--warning); }
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.chip {
+  border: 1px solid var(--primary-line);
+  background: #fff;
+  color: var(--primary-deep);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: .15s ease;
+}
+.chip:hover { background: var(--primary-soft); }
+.chip.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+/* 2차(품목) 필터 칩 — 좀 더 옅게 */
+.chip-row-sub { margin-top: -6px; }
+.chip-row-sub[hidden] { display: none; }
+.chip.chip-sub {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-color: var(--line);
+  color: #475569;
+}
+.chip.chip-sub:hover { background: #f1f5f9; }
+.chip.chip-sub.active {
+  background: var(--primary-deep);
+  color: #fff;
+  border-color: var(--primary-deep);
+}
+
+.toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  user-select: none;
+}
+.toggle-chip input { accent-color: var(--primary); margin: 0; }
+
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.inventory-table .safety-input {
+  width: 74px;
+  margin-right: 0;
+  text-align: right;
+}
+
+.group-row td {
+  background: var(--surface-soft);
+  font-weight: 800;
+  color: var(--primary-deep);
+  border-top: 2px solid var(--primary-line);
+}
+.group-meta {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: 8px;
+}
+.warn-text { color: var(--warning); font-weight: 700; }
+
+.subtotal-row td {
+  background: #f8fafc;
+  font-weight: 700;
+  color: #334155;
+  border-bottom: 2px solid var(--line);
+}
+
+tr.status-out td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+tr.status-low td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+/* ===== 시공팀 대시보드 이식 요소 ===== */
+/* 3단계 상태 배지 */
+.badge.b-ok   { background: #dcfce7; color: var(--success); }
+.badge.b-low  { background: #ffedd5; color: var(--warning); }
+.badge.b-zero { background: #fee2e2; color: var(--danger); }
+
+/* 재고 수량 색상 */
+.qty { font-weight: 700; font-variant-numeric: tabular-nums; }
+.qty.ok   { color: var(--text); }
+.qty.low  { color: var(--warning); }
+.qty.out  { color: var(--danger); }
+
+/* 기준 시각 라벨 */
+.stamp { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 8px; }
+
+/* '재고 있는 품목만' 체크박스 */
+.chk {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: #475569; cursor: pointer; user-select: none;
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; background: #fff;
+}
+.chk input { accent-color: var(--primary); margin: 0; }
+
+/* 상태 필터 바 (여유/부족/품절) */
+.status-filter { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.status-btn {
+  border: 1px solid var(--line); background: #fff; border-radius: 10px;
+  padding: 8px 14px; font-size: 13px; font-weight: 700; color: #475569;
+  cursor: pointer; transition: .15s ease; display: inline-flex; align-items: center; gap: 6px;
+}
+.status-btn b { font-weight: 800; }
+.status-btn:hover { background: #f8fafc; }
+.status-btn.active { color: #fff; border-color: transparent; }
+.status-btn.status-all.active  { background: var(--primary-deep); }
+.status-btn.status-ok.active   { background: var(--success); }
+.status-btn.status-low.active  { background: var(--warning); }
+.status-btn.status-out.active  { background: var(--danger); }
+
+/* 미등록(표준 사이즈 자동채움) 행 */
+tr.phantom td { color: #94a3b8; }
+tr.phantom td:first-child { color: #64748b; }
+.tag-unreg {
+  display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700;
+  color: #94a3b8; background: #f1f5f9; border-radius: 6px; padding: 1px 6px;
+}
+
+/* 수불등록 품목 검색 콤보박스 */
+.combo { position: relative; }
+.combo > input[type="text"] { width: 100%; }
+.combo-list {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 280px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--primary-line); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 6px;
+}
+.combo-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
+}
+.combo-item:hover, .combo-item.active { background: var(--primary-soft); }
+.combo-item .ci-name { font-weight: 700; }
+.combo-item .ci-size { background: #f1f5f9; border-radius: 6px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
+.combo-item .combo-cat { color: var(--muted); font-size: 12px; }
+.combo-item .ci-stock { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.combo-empty { padding: 12px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* ===== 수불이력 필터 바 (가독성 개선) ===== */
+.filter-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  padding: 14px 16px; margin-bottom: 16px;
+  background: var(--surface-soft); border: 1px solid var(--primary-line); border-radius: 14px;
+}
+.filter-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.filter-group.grow { flex: 1; min-width: 180px; }
+.filter-group.grow input[type="text"] { flex: 1; min-width: 120px; }
+.filter-label {
+  font-size: 12px; font-weight: 800; color: var(--primary-deep); white-space: nowrap;
+}
+.filter-group select,
+.filter-group input[type="text"],
+.filter-group input[type="month"],
+.filter-group input[type="week"] { height: 38px; }
+.filter-group select { min-width: 96px; }
+/* 그룹 사이 구분선 */
+.filter-group + .filter-group { border-left: 1px solid var(--primary-line); padding-left: 18px; }
+
+/* 기간 프리셋 세그먼트 */
+.seg { display: inline-flex; flex-wrap: wrap; gap: 4px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+.seg button {
+  border: none; background: transparent; color: #475569;
+  font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 8px; cursor: pointer; transition: .15s ease;
+}
+.seg button:hover { background: #f1f5f9; }
+.seg button.active { background: var(--primary); color: #fff; }
+
+/* ===== 단가 관리: 품목별 일괄 적용 ===== */
+.pg-title { font-weight: 800; color: var(--primary-deep); }
+.bulk-apply { float: right; display: inline-flex; align-items: center; gap: 6px; }
+.bulk-price-input { width: 150px; height: 34px; }
+.mini-btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.mini-btn.primary:hover { background: var(--primary-deep); }
+.pricing-table .price-input, #pricingTableBody .price-input { width: 120px; margin-right: 6px; }
+
+/* 시공팀 표시가격 대조 */
+.verify-info {
+  padding: 10px 14px; margin-bottom: 14px; border-radius: 12px; font-size: 13px; font-weight: 600;
+  border: 1px solid var(--line); background: #f8fafc;
+}
+.verify-info.all-ok { background: #dcfce7; border-color: var(--primary-line); }
+.verify-info.has-diff { background: #ffedd5; border-color: #fed7aa; }
+.verify-info .ok { color: var(--success); }
+.verify-info .bad { color: var(--warning); }
+.verify-info .muted { font-weight: 500; }
+.cmp { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
+.cmp.ok { background: #dcfce7; color: var(--success); }
+.cmp.bad { background: #fee2e2; color: var(--danger); }
+.cmp.none { background: #f1f5f9; color: #94a3b8; }
 
 /* ===== 분석 대시보드 ===== */
 .chart-block {

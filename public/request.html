@@ -314,7 +314,7 @@ const SEED = [
   {category:'시공매트',name:'시공매트',size:'기본',stock:102}
 ];
 
-let ROWS = [], cart = new Map(), onlyAlert = false, PRICEMAP = null;
+let ROWS = [], cart = new Map(), onlyAlert = false, PRICEMAP = null, PRICE_PW = null;
 const $ = (id)=>document.getElementById(id);
 const fmt = (n)=>Number(n||0).toLocaleString('ko-KR');
 const keyOf = (r)=>`${r.category}|${r.name}|${r.size}`;
@@ -369,6 +369,7 @@ async function load(){
   }catch(e){ ROWS=SEED.map(r=>({...r,price:0})); setLive(false); }
   ROWS=normalizeGrid(ROWS);
   ROWS.forEach(r=>r.key=keyOf(r));
+  await refreshPrices();               // 잠금 해제 상태면 관리자 최신 단가를 30초 주기로 재조회
   applyPrices();
   stampTime();
   buildCategoryOptions();
@@ -376,6 +377,16 @@ async function load(){
   if(!$('priceContent').classList.contains('hidden')) renderPrice();
 }
 function applyPrices(){ if(!PRICEMAP) return; ROWS.forEach(r=>{r.price=PRICEMAP[keyOf(r)]||0;}); }
+// 잠금 해제 후, 관리자 단가 변경을 켜 둔 화면에도 자동 반영(조용히 재시도, 실패 무시)
+async function refreshPrices(){
+  if(!PRICE_PW) return;
+  try{
+    const res=await fetch((CONFIG.API_BASE||'')+'/api/prices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:PRICE_PW})});
+    if(!res.ok) return;
+    const data=await res.json();
+    PRICEMAP={}; data.forEach(r=>{PRICEMAP[`${r.category}|${r.name}|${r.size}`]=Number(r.unitPrice||0);});
+  }catch(e){ /* 네트워크 일시 오류는 다음 주기에 재시도 */ }
+}
 function setLive(on){const t=$('liveTag');if(on){t.classList.remove('off');t.innerHTML='<span class="dot"></span> 실시간 연동 중';}else{t.classList.add('off');t.innerHTML='<span class="dot"></span> 내장 데이터 표시 중';}}
 function stampTime(){const t=new Date(),p=n=>String(n).padStart(2,'0');$('updatedAt').textContent=`${t.getFullYear()}.${p(t.getMonth()+1)}.${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;}
 function statusOf(s){if(s<=0)return{qcls:'zero',badge:'<span class="badge b-zero">🔴 품절</span>'};if(s<CONFIG.LOW_THRESHOLD)return{qcls:'low',badge:'<span class="badge b-low">🟠 부족</span>'};return{qcls:'ok',badge:'<span class="badge b-ok">🟢 여유</span>'};}
@@ -472,13 +483,18 @@ async function unlockPrice(){
   const pw=$('pricePw').value;
   try{
     const res=await fetch((CONFIG.API_BASE||'')+'/api/prices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});
-    if(res.status===401)throw new Error('invalid');
-    if(!res.ok)throw new Error('HTTP '+res.status);
+    if(!res.ok){
+      let code=''; try{ code=(await res.json()).error||''; }catch(_){}
+      if(res.status===401) throw new Error('비밀번호가 올바르지 않습니다.');
+      if(code==='price-password-missing') throw new Error('서버에 가격 확인 비밀번호가 설정되지 않았습니다. (관리자: 배포 환경변수 PRICE_PASSWORD 설정 필요)');
+      throw new Error('서버 오류로 확인하지 못했습니다 ('+res.status+'). 잠시 후 다시 시도하세요.');
+    }
     const data=await res.json();PRICEMAP={};data.forEach(r=>{PRICEMAP[`${r.category}|${r.name}|${r.size}`]=Number(r.unitPrice||0);});
+    PRICE_PW=pw;                        // 이후 30초 주기 자동 재조회에 사용
     $('priceErr').textContent='';$('pricePw').value='';$('priceLock').classList.add('hidden');$('priceContent').classList.remove('hidden');
     applyPrices();renderPrice();toast('가격 정보를 확인합니다');
   }catch(e){
-    $('priceErr').textContent='비밀번호가 올바르지 않습니다.';
+    $('priceErr').textContent = e.message || '서버에 연결할 수 없습니다. 잠시 후 다시 시도하세요.';
     const b=$('priceLock');b.classList.remove('shake');void b.offsetWidth;b.classList.add('shake');$('pricePw').select();
   }
 }

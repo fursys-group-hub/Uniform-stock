@@ -63,6 +63,71 @@ const pageMap = {
 
 let state = loadState();
 
+// 재고현황 탭 필터 상태 (분류 / 품목 / 정렬 / 상태 / 재고있는것만)
+const dashFilter = { category: '전체', item: '전체', sort: 'default', status: 'all', onlyStock: false };
+
+// 단가 관리 탭 필터 상태
+const pricingFilter = { category: '전체' };
+// 시공팀 대시보드 표시가격 대조용 (POST /api/prices 로 불러온 실제 노출값)
+let teamPriceMap = null;
+
+// 초성 검색 (시공팀 대시보드와 동일 방식)
+const CHO = ['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+function toChosung(str) {
+  let out = '';
+  for (const ch of str) {
+    const c = ch.charCodeAt(0) - 0xAC00;
+    out += (c >= 0 && c < 11172) ? CHO[Math.floor(c / 588)] : ch;
+  }
+  return out;
+}
+
+// 표준 사이즈 그리드 — 이 분류의 모든 품목은 아래 사이즈를 전부 보유한다고 보고,
+// 데이터에 없는 사이즈는 '품절(재고 0) · 미등록' 행으로 자동 표시(시공팀 대시보드 규칙 이식).
+const SIZE_SETS = {
+  '유니폼 상의': ['90', '95', '100', '105', '110', '115', '120'],
+  '유니폼 하의': ['28', '30', '32', '34', '36', '38', '40', '42']
+};
+
+// 부족 임계값: 품목별 안전재고가 있으면 그 값, 없으면 분류 기본값, 그것도 없으면 전역 기본값(10)
+const LOW_THRESHOLD_DEFAULT = 10;
+const LOW_THRESHOLD_BY_CATEGORY = { '장갑': 200, '시공매트': 20 };
+function lowThresholdOf(row) {
+  const s = Number(row.safetyStock || 0);
+  if (s > 0) return s;
+  return LOW_THRESHOLD_BY_CATEGORY[row.category] || LOW_THRESHOLD_DEFAULT;
+}
+
+function sizeNum(s) { const n = parseInt(s, 10); return isNaN(n) ? 9999 : n; }
+
+// 키 기반 결정적 id (재실행/기기 간 중복 방지)
+function gridId(key) {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  return 'gi-' + (h >>> 0).toString(36);
+}
+
+// 표준 사이즈를 실제 품목(재고 0 = 품절)으로 모두 등록 — 데이터에 없던 사이즈를 품목 마스터에 보강.
+function ensureStandardSizes() {
+  const have = new Set(state.items.map(i => `${i.category}|${i.name}|${i.size}`));
+  let added = 0;
+  Object.entries(SIZE_SETS).forEach(([cat, sizes]) => {
+    const names = [...new Set(state.items.filter(i => i.category === cat).map(i => i.name))];
+    names.forEach(name => sizes.forEach(size => {
+      const key = `${cat}|${name}|${size}`;
+      if (!have.has(key)) {
+        const item = { id: gridId(key), category: cat, name, size, initialStock: 0, unitPrice: 0, safetyStock: 0 };
+        state.items.push(item);
+        enqueue({ type: 'upsertItem', row: item });
+        have.add(key);
+        added++;
+      }
+    }));
+  });
+  if (added) saveState();
+  return added;
+}
+
 const els = {
   navTabs: document.getElementById('navTabs'),
   pageTitle: document.getElementById('pageTitle'),
@@ -70,14 +135,26 @@ const els = {
   headerStats: document.getElementById('headerStats'),
   summaryCards: document.getElementById('summaryCards'),
   inventorySearch: document.getElementById('inventorySearch'),
+  inventorySort: document.getElementById('inventorySort'),
+  onlyStockToggle: document.getElementById('onlyStockToggle'),
+  categoryChips: document.getElementById('categoryChips'),
+  itemChips: document.getElementById('itemChips'),
+  statusFilter: document.getElementById('statusFilter'),
+  inventoryStamp: document.getElementById('inventoryStamp'),
   inventoryTableBody: document.getElementById('inventoryTableBody'),
   transactionForm: document.getElementById('transactionForm'),
-  transactionItemSelect: document.getElementById('transactionItemSelect'),
+  transactionItemSearch: document.getElementById('transactionItemSearch'),
+  transactionItemId: document.getElementById('transactionItemId'),
+  transactionItemList: document.getElementById('transactionItemList'),
   transactionSize: document.getElementById('transactionSize'),
   transactionUnitPrice: document.getElementById('transactionUnitPrice'),
   transactionAmount: document.getElementById('transactionAmount'),
   historyTypeFilter: document.getElementById('historyTypeFilter'),
   historySearch: document.getElementById('historySearch'),
+  historyPreset: document.getElementById('historyPreset'),
+  historyReset: document.getElementById('historyReset'),
+  historyMonth: document.getElementById('historyMonth'),
+  historySummary: document.getElementById('historySummary'),
   historyTableBody: document.getElementById('historyTableBody'),
   auditForm: document.getElementById('auditForm'),
   auditItemSelect: document.getElementById('auditItemSelect'),
@@ -88,6 +165,9 @@ const els = {
   auditImage: document.getElementById('auditImage'),
   auditPreview: document.getElementById('auditPreview'),
   auditHistoryGrid: document.getElementById('auditHistoryGrid'),
+  pricingChips: document.getElementById('pricingChips'),
+  pricingVerifyInfo: document.getElementById('pricingVerifyInfo'),
+  verifyTeamPriceBtn: document.getElementById('verifyTeamPriceBtn'),
   pricingTableBody: document.getElementById('pricingTableBody'),
   billingSearch: document.getElementById('billingSearch'),
   billingSummaryCards: document.getElementById('billingSummaryCards'),
@@ -115,12 +195,19 @@ const els = {
   loginError: document.getElementById('loginError'),
   logoutBtn: document.getElementById('logoutBtn'),
   operatorLabel: document.getElementById('operatorLabel'),
-  activityTableBody: document.getElementById('activityTableBody')
+  activityTableBody: document.getElementById('activityTableBody'),
+  activityToggle: document.getElementById('activityToggle'),
+  activityBody: document.getElementById('activityBody'),
+  activityPager: document.getElementById('activityPager'),
+  activityPrev: document.getElementById('activityPrev'),
+  activityNext: document.getElementById('activityNext'),
+  activityPageInfo: document.getElementById('activityPageInfo')
 };
 
 function init() {
   bindEvents();
   bindAuthEvents();
+  ensureStandardSizes();        // 표준 사이즈를 실제 품목(재고 0=품절)으로 보강
   populateItemSelects();
   setDefaultDates();
   renderAll();
@@ -132,13 +219,30 @@ function init() {
 
 function bindEvents() {
   els.navTabs.addEventListener('click', onTabClick);
-  els.inventorySearch.addEventListener('input', renderInventory);
-  els.transactionItemSelect.addEventListener('change', syncTransactionItem);
+  if (els.activityToggle) els.activityToggle.addEventListener('click', toggleActivityBody);
+  if (els.activityPrev) els.activityPrev.addEventListener('click', () => changeActivityPage(-1));
+  if (els.activityNext) els.activityNext.addEventListener('click', () => changeActivityPage(1));
+  els.inventorySearch.addEventListener('input', renderInventoryPanel);
+  els.inventorySort.addEventListener('change', () => { dashFilter.sort = els.inventorySort.value; renderInventoryPanel(); });
+  els.onlyStockToggle.addEventListener('change', () => { dashFilter.onlyStock = els.onlyStockToggle.checked; renderInventoryPanel(); });
+  const expBtn = document.getElementById('inventoryExport');
+  if (expBtn) expBtn.addEventListener('click', exportInventoryCsv);
+  els.categoryChips.addEventListener('click', onCategoryChipClick);
+  els.itemChips.addEventListener('click', onItemChipClick);
+  els.statusFilter.addEventListener('click', onStatusFilterClick);
+  els.transactionItemSearch.addEventListener('input', () => { els.transactionItemId.value = ''; renderTxItemList(); });
+  els.transactionItemSearch.addEventListener('focus', renderTxItemList);
+  els.transactionItemSearch.addEventListener('blur', () => { setTimeout(() => { els.transactionItemList.hidden = true; }, 150); });
+  els.transactionItemSearch.addEventListener('keydown', onTxSearchKey);
+  els.transactionItemList.addEventListener('mousedown', onTxListClick);
   els.transactionForm.quantity.addEventListener('input', syncTransactionAmount);
   els.transactionForm.type.addEventListener('change', syncTransactionAmount);
   els.transactionForm.addEventListener('submit', submitTransaction);
   els.historyTypeFilter.addEventListener('change', renderHistory);
   els.historySearch.addEventListener('input', renderHistory);
+  els.historyPreset.addEventListener('click', onHistoryPresetClick);
+  els.historyReset.addEventListener('click', onHistoryReset);
+  els.historyMonth.addEventListener('change', renderHistory);
   els.auditItemSelect.addEventListener('change', syncAuditItem);
   els.auditCountedQty.addEventListener('input', syncAuditDiff);
   els.auditImage.addEventListener('change', previewAuditImage);
@@ -147,7 +251,9 @@ function bindEvents() {
   els.seedBtn.addEventListener('click', resetSeedData);
   els.backupBtn.addEventListener('click', downloadBackup);
   els.restoreInput.addEventListener('change', restoreBackup);
-  els.pricingTableBody.addEventListener('click', savePriceInline);
+  els.pricingTableBody.addEventListener('click', onPricingClick);
+  els.pricingChips.addEventListener('click', onPricingChipClick);
+  els.verifyTeamPriceBtn.addEventListener('click', verifyTeamPrices);
   els.analyticsCategory.addEventListener('change', renderAnalytics);
   els.analyticsYear.addEventListener('change', renderAnalytics);
   els.reorderTableBody.addEventListener('click', saveSafetyInline);
@@ -259,6 +365,7 @@ async function loadFromServer() {
       transactions: data.transactions || [],
       audits: data.audits || []
     };
+    ensureStandardSizes();        // 서버 데이터에도 표준 사이즈 보강
     saveState();
     online = true;
     populateItemSelects();
@@ -287,19 +394,61 @@ function logActivity(action, target) {
   enqueue({ type: 'log', entry: { actor: getOperator(), action, target: target || '' } });
 }
 
+const ACTIVITY_PAGE_SIZE = 10;
+let activityRows = [];
+let activityPage = 1;
+
 async function renderActivity() {
   if (!els.activityTableBody) return;
   els.activityTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">불러오는 중…</td></tr>`;
+  if (els.activityPager) els.activityPager.hidden = true;
   try {
-    const rows = await api('/api/logs');
-    els.activityTableBody.innerHTML = rows.map(r => {
-      const t = r.at ? new Date(r.at).toLocaleString('ko-KR') : '-';
-      return `<tr><td>${t}</td><td>${r.actor || '-'}</td><td>${r.action || '-'}</td><td>${r.target || '-'}</td></tr>`;
-    }).join('') || `<tr><td colspan="4" class="empty-state">기록이 없습니다.</td></tr>`;
+    activityRows = await api('/api/logs') || [];
+    activityPage = 1;
+    renderActivityPage();
   } catch (e) {
     if (e.code === 401) { showLogin(); return; }
+    activityRows = [];
     els.activityTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">로그를 불러오지 못했습니다.</td></tr>`;
+    if (els.activityPager) els.activityPager.hidden = true;
   }
+}
+
+// 현재 페이지(10건)만 그린다. activityRows/activityPage 를 읽어 표와 페이저를 갱신.
+function renderActivityPage() {
+  if (!els.activityTableBody) return;
+  const total = activityRows.length;
+  const pageCount = Math.max(1, Math.ceil(total / ACTIVITY_PAGE_SIZE));
+  if (activityPage < 1) activityPage = 1;
+  if (activityPage > pageCount) activityPage = pageCount;
+
+  const start = (activityPage - 1) * ACTIVITY_PAGE_SIZE;
+  const slice = activityRows.slice(start, start + ACTIVITY_PAGE_SIZE);
+  els.activityTableBody.innerHTML = slice.map(r => {
+    const t = r.at ? new Date(r.at).toLocaleString('ko-KR') : '-';
+    return `<tr><td>${t}</td><td>${r.actor || '-'}</td><td>${r.action || '-'}</td><td>${r.target || '-'}</td></tr>`;
+  }).join('') || `<tr><td colspan="4" class="empty-state">기록이 없습니다.</td></tr>`;
+
+  if (els.activityPager) {
+    els.activityPager.hidden = total <= ACTIVITY_PAGE_SIZE;   // 한 페이지면 페이저 숨김
+    if (els.activityPageInfo) els.activityPageInfo.textContent = `${activityPage} / ${pageCount} · 총 ${total}건`;
+    if (els.activityPrev) els.activityPrev.disabled = activityPage <= 1;
+    if (els.activityNext) els.activityNext.disabled = activityPage >= pageCount;
+  }
+}
+
+function changeActivityPage(delta) {
+  activityPage += delta;
+  renderActivityPage();
+}
+
+// 활동 로그 접기/펴기
+function toggleActivityBody() {
+  if (!els.activityBody || !els.activityToggle) return;
+  const collapsed = els.activityBody.hidden;
+  els.activityBody.hidden = !collapsed;
+  els.activityToggle.setAttribute('aria-expanded', String(collapsed));
+  els.activityToggle.textContent = collapsed ? '접기 ▾' : '펼치기 ▸';
 }
 
 /* ===================== 로그인 / 권한 (Phase 2) =====================
@@ -391,13 +540,119 @@ function onTabClick(event) {
   if (tab === 'activity') renderActivity();
 }
 
+// 분류 → 품목 → 사이즈(숫자) 순으로 정렬된 품목 목록
+function getSortedItems() {
+  const catIdx = new Map();
+  const nameIdx = new Map();
+  state.items.forEach(i => {
+    if (!catIdx.has(i.category)) catIdx.set(i.category, catIdx.size);
+    const nk = `${i.category}|${i.name}`;
+    if (!nameIdx.has(nk)) nameIdx.set(nk, nameIdx.size);
+  });
+  return [...state.items].sort((a, b) =>
+    (catIdx.get(a.category) - catIdx.get(b.category)) ||
+    (nameIdx.get(`${a.category}|${a.name}`) - nameIdx.get(`${b.category}|${b.name}`)) ||
+    (sizeNum(a.size) - sizeNum(b.size))
+  );
+}
+
+// 품목 셀렉트를 품목별 optgroup으로 묶어 반환 (실사·편집용)
+function buildItemSelectHtml() {
+  const sorted = getSortedItems();
+  const groups = [];
+  const map = new Map();
+  sorted.forEach(it => {
+    const key = `${it.category}|${it.name}`;
+    if (!map.has(key)) { map.set(key, []); groups.push(key); }
+    map.get(key).push(it);
+  });
+  return groups.map(key => {
+    const [cat, name] = key.split('|');
+    const opts = map.get(key)
+      .map(it => `<option value="${it.id}">${it.name} / ${it.size}</option>`)
+      .join('');
+    return `<optgroup label="${cat} · ${name}">${opts}</optgroup>`;
+  }).join('');
+}
+
 function populateItemSelects() {
-  const options = state.items.map(item => `<option value="${item.id}">${item.category} / ${item.name} / ${item.size}</option>`).join('');
-  els.transactionItemSelect.innerHTML = options;
-  els.auditItemSelect.innerHTML = options;
-  els.editItemSelect.innerHTML = options;
+  // 실사·편집: 정렬 + 품목별 그룹 select / 수불: 검색형 콤보박스(아래 renderTxItemList)
+  const html = buildItemSelectHtml();
+  els.auditItemSelect.innerHTML = html;
+  els.editItemSelect.innerHTML = html;
   syncTransactionItem();
   syncAuditItem();
+}
+
+// ===== 수불등록 품목: 검색형 콤보박스 (초성·부분 일치) =====
+let txComboItems = [];
+let txComboActive = -1;
+
+function filterTxItems(query) {
+  const kw = query.trim();
+  const kwCho = toChosung(kw);
+  let items = getSortedItems();
+  if (kw) {
+    items = items.filter(it => {
+      const hay = `${it.category} ${it.name} ${it.size}`;
+      return hay.includes(kw) || toChosung(hay).includes(kwCho);
+    });
+  }
+  return items;
+}
+
+function renderTxItemList() {
+  txComboItems = filterTxItems(els.transactionItemSearch.value).slice(0, 60);
+  if (!txComboItems.length) {
+    els.transactionItemList.innerHTML = `<div class="combo-empty">일치하는 품목이 없습니다</div>`;
+    els.transactionItemList.hidden = false;
+    return;
+  }
+  if (txComboActive >= txComboItems.length) txComboActive = -1;
+  els.transactionItemList.innerHTML = txComboItems.map((it, i) => {
+    const stock = getCurrentStock(it.id);
+    return `<div class="combo-item${i === txComboActive ? ' active' : ''}" data-id="${it.id}">
+      <span class="ci-name">${it.name}</span><b class="ci-size">${it.size}</b>
+      <span class="combo-cat">${it.category}</span><span class="ci-stock">재고 ${formatNumber(stock)}</span></div>`;
+  }).join('');
+  els.transactionItemList.hidden = false;
+}
+
+function onTxListClick(event) {
+  const row = event.target.closest('[data-id]');
+  if (!row) return;
+  event.preventDefault(); // blur보다 먼저 처리
+  selectTxItem(row.dataset.id);
+}
+
+function selectTxItem(id) {
+  const it = getItemById(id);
+  if (!it) return;
+  els.transactionItemId.value = id;
+  els.transactionItemSearch.value = `${it.category} · ${it.name} / ${it.size}`;
+  els.transactionItemList.hidden = true;
+  txComboActive = -1;
+  syncTransactionItem();
+}
+
+function onTxSearchKey(event) {
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    if (els.transactionItemList.hidden) { renderTxItemList(); return; }
+    txComboActive = Math.min(txComboActive + 1, txComboItems.length - 1);
+    renderTxItemList();
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    txComboActive = Math.max(txComboActive - 1, 0);
+    renderTxItemList();
+  } else if (event.key === 'Enter') {
+    if (!els.transactionItemList.hidden && txComboItems.length) {
+      event.preventDefault();
+      selectTxItem(txComboItems[txComboActive >= 0 ? txComboActive : 0].id);
+    }
+  } else if (event.key === 'Escape') {
+    els.transactionItemList.hidden = true;
+  }
 }
 
 function getItemById(id) {
@@ -413,19 +668,57 @@ function getSignedQuantity(tx) {
 
 function getCurrentStock(itemId) {
   const item = getItemById(itemId);
+  const init = item ? Number(item.initialStock || 0) : 0; // 미등록(아직 미생성) 품목은 초기재고 0
   const sum = state.transactions.filter(tx => tx.itemId === itemId).reduce((acc, tx) => acc + getSignedQuantity(tx), 0);
-  return item.initialStock + sum;
+  return init + sum;
 }
 
 function getInventoryRows() {
   return state.items.map(item => ({ ...item, currentStock: getCurrentStock(item.id), stockValue: getCurrentStock(item.id) * (Number(item.unitPrice) || 0) }));
 }
 
+// ===== 품목 목록 단일화 =====
+// 재고현황 대시보드·수불등록·실사가 같은 품목 목록을 공유하도록,
+// 실제 품목 + 표준 사이즈 그리드의 '미등록' 사이즈를 합친 캐논 목록을 만든다.
+function getGridItems() {
+  const real = state.items.map(i => ({ ...i, phantom: false }));
+  const have = new Set(real.map(i => `${i.category}|${i.name}|${i.size}`));
+  const out = [...real];
+  Object.entries(SIZE_SETS).forEach(([cat, sizes]) => {
+    const names = [...new Set(state.items.filter(i => i.category === cat).map(i => i.name))];
+    names.forEach(name => sizes.forEach(size => {
+      const key = `${cat}|${name}|${size}`;
+      if (!have.has(key)) {
+        out.push({ id: `phantom-${key}`, category: cat, name, size, initialStock: 0, unitPrice: 0, safetyStock: 0, phantom: true });
+      }
+    }));
+  });
+  return out;
+}
+
+// 그리드(미등록 포함) 기준 조회 — 표시/동기화용
+function resolveGridItem(id) {
+  return getItemById(id) || getGridItems().find(i => i.id === id) || null;
+}
+
+// 미등록(그리드) 품목이 선택돼 수불/실사가 등록되면, 실제 품목으로 승격시켜 재고에 연동한다.
+function materializeItem(id) {
+  const existing = getItemById(id);
+  if (existing) return existing;
+  const grid = getGridItems().find(i => i.id === id);
+  if (!grid) return null;
+  const item = { id: `it-${crypto.randomUUID().slice(0, 8)}`, category: grid.category, name: grid.name, size: grid.size, initialStock: 0, unitPrice: 0, safetyStock: 0 };
+  state.items.push(item);
+  enqueue({ type: 'upsertItem', row: item });
+  logActivity('품목 등록', `${item.name}/${item.size} (미등록 → 등록)`);
+  populateItemSelects();
+  return item;
+}
+
 function renderAll() {
   saveState();
   renderHeaderStats();
-  renderSummaryCards();
-  renderInventory();
+  renderInventoryPanel();
   renderHistory();
   renderPricing();
   renderAuditHistory();
@@ -446,39 +739,226 @@ function renderHeaderStats() {
   `;
 }
 
+// ===== 재고현황 탭: 사이즈 그리드 · 임계값 상태 · 상태 필터 · 분류 그룹핑 =====
+
+// 재고 상태 판정: 품절(out) / 부족(low, 임계값 미만) / 여유(ok)
+function getStockStatus(row) {
+  if (row.currentStock <= 0) return 'out';
+  if (row.currentStock < lowThresholdOf(row)) return 'low';
+  return 'ok';
+}
+
+function statusBadge(status) {
+  if (status === 'out') return '<span class="badge b-zero">🔴 품절</span>';
+  if (status === 'low') return '<span class="badge b-low">🟠 부족</span>';
+  return '<span class="badge b-ok">🟢 여유</span>';
+}
+
+// 재고현황 표시용: 단일 품목 목록(getGridItems)에 현재고/재고금액을 계산해 붙인다.
+function getNormalizedInventoryRows() {
+  return getGridItems().map(i => {
+    const currentStock = getCurrentStock(i.id);
+    return { ...i, currentStock, stockValue: currentStock * (Number(i.unitPrice) || 0) };
+  });
+}
+
+// 분류/품목/검색/재고있는것만 적용 (상태 필터 제외) — 초성 검색 지원
+function getScopedRows() {
+  const keyword = els.inventorySearch.value.trim();
+  const kwCho = toChosung(keyword);
+  let rows = getNormalizedInventoryRows();
+  if (dashFilter.category !== '전체') rows = rows.filter(r => r.category === dashFilter.category);
+  if (dashFilter.item !== '전체') rows = rows.filter(r => r.name === dashFilter.item);
+  if (dashFilter.onlyStock) rows = rows.filter(r => r.currentStock > 0);
+  if (keyword) {
+    rows = rows.filter(r => {
+      const hay = `${r.category} ${r.name} ${r.size}`;
+      return hay.includes(keyword) || toChosung(hay).includes(kwCho);
+    });
+  }
+  return rows;
+}
+
+// 표에 최종 표시할 행 (상태 필터까지 적용)
+function getDashboardRows() {
+  let rows = getScopedRows();
+  if (dashFilter.status !== 'all') rows = rows.filter(r => getStockStatus(r) === dashFilter.status);
+  return rows;
+}
+
+function sortDashboardRows(rows) {
+  const arr = [...rows];
+  if (dashFilter.sort === 'stockAsc') return arr.sort((a, b) => a.currentStock - b.currentStock);
+  if (dashFilter.sort === 'stockDesc') return arr.sort((a, b) => b.currentStock - a.currentStock);
+  // 기본: 품목 등장순 → 사이즈 숫자 오름차순
+  const idx = new Map();
+  state.items.forEach(i => { const k = `${i.category}|${i.name}`; if (!idx.has(k)) idx.set(k, idx.size); });
+  const nr = r => idx.has(`${r.category}|${r.name}`) ? idx.get(`${r.category}|${r.name}`) : 999;
+  return arr.sort((a, b) => nr(a) - nr(b) || sizeNum(a.size) - sizeNum(b.size));
+}
+
+function renderInventoryPanel() {
+  renderInventoryStamp();
+  renderCategoryChips();
+  renderItemChips();
+  renderStatusFilter();
+  renderSummaryCards();
+  renderInventory();
+}
+
+function renderInventoryStamp() {
+  const t = new Date();
+  const p = n => String(n).padStart(2, '0');
+  els.inventoryStamp.textContent = `기준 ${t.getFullYear()}.${p(t.getMonth() + 1)}.${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
+}
+
+// 상태 필터 바 (여유/부족/품절) — 클릭 시 해당 상태만, 다시 누르면 해제
+function renderStatusFilter() {
+  const scoped = getScopedRows();
+  const counts = { all: scoped.length, ok: 0, low: 0, out: 0 };
+  scoped.forEach(r => { counts[getStockStatus(r)]++; });
+  const defs = [['all', '전체'], ['ok', '🟢 여유'], ['low', '🟠 부족'], ['out', '🔴 품절']];
+  els.statusFilter.innerHTML = defs.map(([key, label]) => {
+    const active = dashFilter.status === key ? ' active' : '';
+    return `<button class="status-btn status-${key}${active}" data-status="${key}">${label} <b>${formatNumber(counts[key])}</b></button>`;
+  }).join('');
+}
+
+function onStatusFilterClick(event) {
+  const btn = event.target.closest('[data-status]');
+  if (!btn) return;
+  const key = btn.dataset.status;
+  dashFilter.status = (dashFilter.status === key) ? 'all' : key;
+  renderInventoryPanel();
+}
+
+function renderCategoryChips() {
+  const cats = [...new Set(state.items.map(i => i.category))];
+  els.categoryChips.innerHTML = ['전체', ...cats].map(cat => {
+    const active = dashFilter.category === cat ? ' active' : '';
+    return `<button class="chip${active}" data-cat="${cat}">${cat}</button>`;
+  }).join('');
+}
+
+// 분류 선택 시, 그 분류 안의 품목을 2차 필터로 노출 (전체 선택 시 숨김)
+function renderItemChips() {
+  if (dashFilter.category === '전체') {
+    els.itemChips.innerHTML = '';
+    els.itemChips.hidden = true;
+    return;
+  }
+  els.itemChips.hidden = false;
+  const names = [...new Set(state.items.filter(i => i.category === dashFilter.category).map(i => i.name))];
+  els.itemChips.innerHTML = ['전체', ...names].map(name => {
+    const active = dashFilter.item === name ? ' active' : '';
+    const label = name === '전체' ? '품목 전체' : name;
+    return `<button class="chip chip-sub${active}" data-item="${name}">${label}</button>`;
+  }).join('');
+}
+
+function onCategoryChipClick(event) {
+  const chip = event.target.closest('[data-cat]');
+  if (!chip) return;
+  dashFilter.category = chip.dataset.cat;
+  dashFilter.item = '전체'; // 분류를 바꾸면 품목 필터 초기화
+  renderInventoryPanel();
+}
+
+function onItemChipClick(event) {
+  const chip = event.target.closest('[data-item]');
+  if (!chip) return;
+  dashFilter.item = chip.dataset.item;
+  renderInventoryPanel();
+}
+
+// 요약카드는 현재 필터 범위(scope)를 반영해 동적으로 계산됨 (상태 필터 제외 = 안정적 표시)
 function renderSummaryCards() {
-  const inventory = getInventoryRows();
-  const totalStock = inventory.reduce((acc, row) => acc + row.currentStock, 0);
-  const totalValue = inventory.reduce((acc, row) => acc + row.stockValue, 0);
-  const lowItems = inventory.filter(row => row.currentStock <= 0).length;
-  const today = new Date().toISOString().slice(0, 10);
-  const todayMoves = state.transactions.filter(tx => tx.date === today).length;
-  els.summaryCards.innerHTML = [
-    ['총 재고 수량', formatNumber(totalStock)],
-    ['총 재고 금액', formatCurrency(totalValue)],
-    ['재고 0 이하 품목', formatNumber(lowItems)],
-    ['오늘 수불 건수', formatNumber(todayMoves)]
-  ].map(([label, value]) => `<div class="summary-card"><span>${label}</span><strong>${value}</strong></div>`).join('');
+  const rows = getScopedRows();
+  let scope = dashFilter.category === '전체' ? '전체' : dashFilter.category;
+  if (dashFilter.item !== '전체') scope = dashFilter.item;
+  const totalStock = rows.reduce((acc, r) => acc + r.currentStock, 0);
+  const totalValue = rows.reduce((acc, r) => acc + r.stockValue, 0);
+  // 재발주가 필요한(부족·품절) 품목 수 — 관리자가 바로 챙겨야 할 핵심 지표
+  const needReorder = rows.filter(r => getStockStatus(r) !== 'ok').length;
+
+  const cards = [
+    [`총 재고 수량 · ${scope}`, formatNumber(totalStock)],
+    [`재발주 필요 · ${scope}`, `${formatNumber(needReorder)}건`]
+  ];
+  // 단가가 설정된 재고가 있을 때만 금액 카드 노출
+  if (totalValue > 0) cards.splice(1, 0, [`총 재고 금액 · ${scope}`, formatCurrency(totalValue)]);
+
+  els.summaryCards.innerHTML = cards
+    .map(([label, value]) => `<div class="summary-card"><span>${label}</span><strong>${value}</strong></div>`)
+    .join('');
 }
 
 function renderInventory() {
-  const keyword = els.inventorySearch.value.trim();
-  const rows = getInventoryRows().filter(row => !keyword || `${row.category} ${row.name} ${row.size}`.includes(keyword));
-  els.inventoryTableBody.innerHTML = rows.map(row => `
-    <tr>
-      <td>${row.category}</td>
-      <td>${row.name}</td>
-      <td>${row.size}</td>
-      <td>${formatNumber(row.currentStock)}</td>
-      <td>${formatCurrency(row.unitPrice || 0)}</td>
-      <td>${formatCurrency(row.stockValue)}</td>
-    </tr>
-  `).join('') || `<tr><td colspan="6" class="empty-state">표시할 재고가 없습니다.</td></tr>`;
+  const rows = getDashboardRows();
+  if (!rows.length) {
+    els.inventoryTableBody.innerHTML = `<tr><td colspan="6" class="empty-state">조건에 맞는 재고가 없습니다.</td></tr>`;
+    return;
+  }
+
+  // 분류별 그룹핑
+  const groups = {};
+  rows.forEach(r => { (groups[r.category] = groups[r.category] || []).push(r); });
+
+  let html = '';
+  Object.keys(groups).forEach(cat => {
+    const items = sortDashboardRows(groups[cat]);
+    const gStock = items.reduce((acc, r) => acc + r.currentStock, 0);
+    const gValue = items.reduce((acc, r) => acc + r.stockValue, 0);
+    const gShort = items.filter(r => getStockStatus(r) !== 'ok').length;
+    const nameCount = new Set(items.map(r => r.name)).size;
+
+    html += `<tr class="group-row"><td colspan="6">${cat}
+      <span class="group-meta">${nameCount}품목 · ${items.length}사이즈 · 재고 ${formatNumber(gStock)}${gShort ? ` · <span class="warn-text">부족·품절 ${gShort}</span>` : ''}</span></td></tr>`;
+
+    html += items.map(row => {
+      const status = getStockStatus(row);
+      return `<tr class="status-${status}">
+        <td>${row.name}</td>
+        <td>${row.size}</td>
+        <td class="num"><span class="qty ${status}">${formatNumber(row.currentStock)}</span></td>
+        <td>${statusBadge(status)}</td>
+        <td class="num">${formatCurrency(row.unitPrice || 0)}</td>
+        <td class="num">${formatCurrency(row.stockValue)}</td>
+      </tr>`;
+    }).join('');
+
+    html += `<tr class="subtotal-row"><td colspan="2">${cat} 소계</td><td class="num">${formatNumber(gStock)}</td><td></td><td></td><td class="num">${formatCurrency(gValue)}</td></tr>`;
+  });
+
+  els.inventoryTableBody.innerHTML = html;
+}
+
+// 현재 화면(필터·정렬 반영)의 재고를 CSV(엑셀)로 내보낸다.
+function exportInventoryCsv() {
+  const rows = sortDashboardRows(getDashboardRows());
+  if (!rows.length) { alert('내보낼 재고가 없습니다.'); return; }
+  const statusKo = s => s === 'out' ? '품절' : s === 'low' ? '부족' : '여유';
+  const header = ['분류', '품목', '사이즈', '현재고', '안전재고', '상태', '단가', '재고금액'];
+  const cell = v => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = [header.map(cell).join(',')];
+  rows.forEach(r => {
+    lines.push([r.category, r.name, r.size, r.currentStock, (r.safetyStock || 0), statusKo(getStockStatus(r)), (r.unitPrice || 0), r.stockValue].map(cell).join(','));
+  });
+  const csv = '﻿' + lines.join('\r\n'); // BOM: 엑셀에서 한글 깨짐 방지
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const t = new Date(); const p = n => String(n).padStart(2, '0');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `재고현황_${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}_${p(t.getHours())}${p(t.getMinutes())}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  logActivity('재고현황 내보내기', `${rows.length}행`);
 }
 
 function syncTransactionItem() {
-  const item = getItemById(els.transactionItemSelect.value);
-  if (!item) return;
+  const item = resolveGridItem(els.transactionItemId.value);
+  if (!item) { els.transactionSize.value = ''; els.transactionUnitPrice.value = ''; return; }
   els.transactionSize.value = item.size;
   els.transactionUnitPrice.value = item.unitPrice || 0;
   syncTransactionAmount();
@@ -496,7 +976,8 @@ function syncTransactionAmount() {
 function submitTransaction(event) {
   event.preventDefault();
   const form = new FormData(els.transactionForm);
-  const item = getItemById(form.get('itemId'));
+  const item = materializeItem(form.get('itemId')); // 미등록 사이즈면 실제 품목으로 자동 생성
+  if (!item) { alert('품목을 찾을 수 없습니다.'); return; }
   const tx = {
     id: crypto.randomUUID(),
     date: form.get('date'),
@@ -521,13 +1002,102 @@ function submitTransaction(event) {
   alert('수불 내역이 등록되었습니다.');
 }
 
+// ===== 수불이력: 기간 프리셋 필터 + 통합 검색 =====
+
+// ISO 주 계산 (이번주 판정용)
+function isoWeekOf(dateStr) {
+  const dt = new Date(dateStr + 'T00:00:00');
+  const d = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()));
+  const dayNum = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const fDayNum = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - fDayNum + 3);
+  const week = 1 + Math.round((d - firstThursday) / (7 * 86400000));
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+// 기간 프리셋 상태: all | thisweek | thismonth | lastmonth | month
+let historyPreset = 'all';
+
+function lastMonthStr(todayStr) {
+  const d = new Date(todayStr + 'T00:00:00');
+  d.setMonth(d.getMonth() - 1);
+  return d.toISOString().slice(0, 7);
+}
+
+function historyPeriodInfo() {
+  const today = new Date().toISOString().slice(0, 10);
+  switch (historyPreset) {
+    case 'thisweek': return { label: `이번주 (${today.slice(0, 4)}년 ${Number(isoWeekOf(today).slice(6))}주차)` };
+    case 'thismonth': return { label: `이번달 (${today.slice(0, 4)}년 ${Number(today.slice(5, 7))}월)` };
+    case 'lastmonth': { const m = lastMonthStr(today); return { label: `지난달 (${m.slice(0, 4)}년 ${Number(m.slice(5, 7))}월)` }; }
+    case 'month': { const m = els.historyMonth.value; return { label: m ? `${m.slice(0, 4)}년 ${Number(m.slice(5, 7))}월` : '월 지정' }; }
+    default: return { label: '전체 기간' };
+  }
+}
+
+function inHistoryPeriod(dateStr) {
+  if (!dateStr) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  switch (historyPreset) {
+    case 'thisweek': return isoWeekOf(dateStr) === isoWeekOf(today);
+    case 'thismonth': return dateStr.slice(0, 7) === today.slice(0, 7);
+    case 'lastmonth': return dateStr.slice(0, 7) === lastMonthStr(today);
+    case 'month': { const m = els.historyMonth.value; return m ? dateStr.slice(0, 7) === m : true; }
+    default: return true;
+  }
+}
+
+function onHistoryPresetClick(event) {
+  const btn = event.target.closest('[data-preset]');
+  if (!btn) return;
+  historyPreset = btn.dataset.preset;
+  [...els.historyPreset.children].forEach(b => b.classList.toggle('active', b === btn));
+  els.historyMonth.hidden = historyPreset !== 'month';
+  const today = new Date().toISOString().slice(0, 10);
+  if (historyPreset === 'month' && !els.historyMonth.value) els.historyMonth.value = today.slice(0, 7);
+  renderHistory();
+}
+
+function onHistoryReset() {
+  historyPreset = 'all';
+  [...els.historyPreset.children].forEach(b => b.classList.toggle('active', b.dataset.preset === 'all'));
+  els.historyMonth.hidden = true;
+  els.historyMonth.value = '';
+  els.historyTypeFilter.value = '전체';
+  els.historySearch.value = '';
+  renderHistory();
+}
+
+// 상단 요약: 선택한 기간에 따라 분출건수·청구누계·차이발생실사가 달라진다.
+function renderHistorySummary() {
+  const info = historyPeriodInfo();
+  const issues = state.transactions.filter(tx => tx.type === '분출' && inHistoryPeriod(tx.date));
+  const issueCount = issues.length;
+  const totalAmount = issues.reduce((acc, tx) => acc + (tx.amount || 0), 0);
+  const diffAudits = state.audits.filter(a => a.diffQty !== 0 && inHistoryPeriod(a.date)).length;
+  els.historySummary.innerHTML = [
+    [`분출 건수 · ${info.label}`, formatNumber(issueCount)],
+    [`청구 누계 · ${info.label}`, formatCurrency(totalAmount)],
+    [`차이 발생 실사 · ${info.label}`, formatNumber(diffAudits)]
+  ].map(([l, v]) => `<div class="summary-card"><span>${l}</span><strong>${v}</strong></div>`).join('');
+}
+
 function renderHistory() {
+  renderHistorySummary();
   const typeFilter = els.historyTypeFilter.value;
   const keyword = els.historySearch.value.trim();
+  const kwCho = toChosung(keyword);
   const rows = state.transactions.filter(tx => {
     const item = getItemById(tx.itemId);
-    const text = `${item?.name || ''} ${item?.size || ''} ${tx.issuer} ${tx.receiver} ${tx.note}`;
-    return (typeFilter === '전체' || tx.type === typeFilter) && (!keyword || text.includes(keyword));
+    if (!inHistoryPeriod(tx.date)) return false;
+    if (typeFilter !== '전체' && tx.type !== typeFilter) return false;
+    if (keyword) {
+      const text = `${item?.name || ''} ${item?.size || ''} ${tx.issuer} ${tx.receiver} ${tx.note}`;
+      if (!text.includes(keyword) && !toChosung(text).includes(kwCho)) return false;
+    }
+    return true;
   });
 
   els.historyTableBody.innerHTML = rows.map(tx => {
@@ -627,7 +1197,7 @@ function submitEdit(event) {
 }
 
 function syncAuditItem() {
-  const item = getItemById(els.auditItemSelect.value);
+  const item = resolveGridItem(els.auditItemSelect.value);
   if (!item) return;
   els.auditSize.value = item.size;
   els.auditSystemQty.value = getCurrentStock(item.id);
@@ -654,7 +1224,8 @@ async function previewAuditImage() {
 async function submitAudit(event) {
   event.preventDefault();
   const form = new FormData(els.auditForm);
-  const item = getItemById(form.get('itemId'));
+  const item = materializeItem(form.get('itemId')); // 미등록 사이즈면 실제 품목으로 자동 생성
+  if (!item) { alert('품목을 찾을 수 없습니다.'); return; }
   const systemQty = getCurrentStock(item.id);
   const countedQty = Number(form.get('countedQty'));
   const diffQty = countedQty - systemQty;
@@ -732,19 +1303,129 @@ function renderAuditHistory() {
   });
 }
 
+function renderPricingChips() {
+  const cats = [...new Set(state.items.map(i => i.category))];
+  els.pricingChips.innerHTML = ['전체', ...cats].map(cat => {
+    const active = pricingFilter.category === cat ? ' active' : '';
+    return `<button class="chip${active}" data-pcat="${cat}">${cat}</button>`;
+  }).join('');
+}
+
+function onPricingChipClick(event) {
+  const chip = event.target.closest('[data-pcat]');
+  if (!chip) return;
+  pricingFilter.category = chip.dataset.pcat;
+  renderPricing();
+}
+
 function renderPricing() {
-  els.pricingTableBody.innerHTML = state.items.map(item => `
-    <tr>
-      <td>${item.category}</td>
-      <td>${item.name}</td>
-      <td>${item.size}</td>
-      <td>${formatCurrency(item.unitPrice || 0)}</td>
-      <td>
-        <input class="price-input" type="number" min="0" value="${item.unitPrice || 0}" data-price-id="${item.id}" />
-        <button class="primary-btn" data-save-price="${item.id}">저장</button>
-      </td>
-    </tr>
-  `).join('');
+  renderPricingChips();
+  const items = getSortedItems().filter(i => pricingFilter.category === '전체' || i.category === pricingFilter.category);
+  if (!items.length) {
+    els.pricingTableBody.innerHTML = `<tr><td colspan="3" class="empty-state">품목이 없습니다.</td></tr>`;
+    return;
+  }
+  // 품목(분류|품목)별 그룹핑
+  const groups = [];
+  const map = new Map();
+  items.forEach(it => { const key = `${it.category}|${it.name}`; if (!map.has(key)) { map.set(key, []); groups.push(key); } map.get(key).push(it); });
+
+  let html = '';
+  groups.forEach(key => {
+    const [cat, name] = key.split('|');
+    const rows = map.get(key);
+    const common = rows.map(r => Number(r.unitPrice || 0)).find(p => p > 0) || '';
+    html += `<tr class="group-row"><td colspan="3">
+      <span class="pg-title">${cat} · ${name}</span>
+      <span class="group-meta">${rows.length}사이즈</span>
+      <span class="bulk-apply">
+        <input type="number" class="bulk-price-input" min="0" placeholder="이 품목 전체 단가" value="${common}" data-bcat="${cat}" data-bname="${name}" />
+        <button class="mini-btn primary" data-bulk-apply data-bcat="${cat}" data-bname="${name}">일괄 적용</button>
+      </span></td></tr>`;
+    html += rows.map(item => `
+      <tr>
+        <td>${item.size}</td>
+        <td>${formatCurrency(item.unitPrice || 0)} ${teamPriceCmpBadge(item)}</td>
+        <td class="row-actions">
+          <input class="price-input" type="number" min="0" value="${item.unitPrice || 0}" data-price-id="${item.id}" />
+          <button class="mini-btn" data-save-price="${item.id}">저장</button>
+        </td>
+      </tr>`).join('');
+  });
+  els.pricingTableBody.innerHTML = html;
+  renderPricingVerifyInfo(items);
+}
+
+// 시공팀 표시가격 대조 배지 (대조 실행 후에만 표시)
+function teamPriceCmpBadge(item) {
+  if (!teamPriceMap) return '';
+  const key = `${item.category}|${item.name}|${item.size}`;
+  if (!(key in teamPriceMap)) return `<span class="cmp none">시공팀 미표시</span>`;
+  return Number(teamPriceMap[key]) === Number(item.unitPrice || 0)
+    ? `<span class="cmp ok">✓ 시공팀 일치</span>`
+    : `<span class="cmp bad">⚠ 시공팀 ${formatCurrency(teamPriceMap[key])}</span>`;
+}
+
+function renderPricingVerifyInfo(items) {
+  if (!teamPriceMap) { els.pricingVerifyInfo.hidden = true; return; }
+  let ok = 0, bad = 0, none = 0;
+  items.forEach(it => {
+    const key = `${it.category}|${it.name}|${it.size}`;
+    if (!(key in teamPriceMap)) none++;
+    else if (Number(teamPriceMap[key]) === Number(it.unitPrice || 0)) ok++;
+    else bad++;
+  });
+  els.pricingVerifyInfo.hidden = false;
+  els.pricingVerifyInfo.className = `verify-info ${bad === 0 ? 'all-ok' : 'has-diff'}`;
+  els.pricingVerifyInfo.innerHTML = `시공팀 표시가격 대조 — <b class="ok">✓ 일치 ${ok}</b> · <b class="bad">⚠ 불일치 ${bad}</b>${none ? ` · 시공팀 미표시 ${none}` : ''}`
+    + (bad ? ` <span class="muted">불일치 항목은 대개 저장 후 아직 동기화되지 않았거나 서버 반영 전입니다.</span>` : ` <span class="muted">모든 단가가 시공팀 대시보드와 일치합니다.</span>`);
+}
+
+// 시공팀 공개 대시보드가 실제로 표시하는 가격을 불러와 관리자 단가와 대조
+async function verifyTeamPrices() {
+  const pw = prompt('시공팀 대시보드 "가격 확인" 비밀번호를 입력하세요.');
+  if (pw === null) return;
+  try {
+    const data = await api('/api/prices', { method: 'POST', body: { password: pw }, auth: false });
+    teamPriceMap = {};
+    (data || []).forEach(r => { teamPriceMap[`${r.category}|${r.name}|${r.size}`] = Number(r.unitPrice || 0); });
+    renderPricing();
+  } catch (e) {
+    const msg = e.code === 401 ? '비밀번호가 올바르지 않습니다.' : (e.message || e);
+    alert(`시공팀 표시가격을 불러오지 못했습니다.\n(${msg})\n\n서버 연결 상태와 비밀번호를 확인하세요. (로컬/미리보기에서는 동작하지 않습니다.)`);
+  }
+}
+
+function onPricingClick(event) {
+  const bulk = event.target.closest('[data-bulk-apply]');
+  if (bulk) {
+    const input = bulk.closest('td').querySelector('.bulk-price-input');
+    applyBulkPrice(bulk.dataset.bcat, bulk.dataset.bname, Number(input.value || 0));
+    return;
+  }
+  savePriceInline(event);
+}
+
+// 같은 품목의 모든 사이즈에 단가를 한 번에 적용 (기존 거래 청구액도 소급 반영)
+function applyBulkPrice(cat, name, price) {
+  const targets = state.items.filter(i => i.category === cat && i.name === name);
+  if (!targets.length) return;
+  if (!confirm(`${cat} · ${name} 전체 ${targets.length}개 사이즈 단가를 ${formatCurrency(price)}(으)로 적용할까요?`)) return;
+  targets.forEach(item => {
+    item.unitPrice = price;
+    enqueue({ type: 'upsertItem', row: item });
+    state.transactions.forEach(tx => {
+      if (tx.itemId === item.id) {
+        tx.unitPrice = price;
+        tx.amount = tx.type === '분출' ? tx.quantity * price : 0;
+        enqueue({ type: 'updateTx', row: tx });
+      }
+    });
+  });
+  logActivity('단가 일괄적용', `${cat}/${name} 전체 ${targets.length}개 사이즈 → ${price}`);
+  renderAll();
+  syncTransactionItem();
+  alert(`${name} 전체 사이즈 단가를 ${formatCurrency(price)}(으)로 적용했습니다.`);
 }
 
 function savePriceInline(event) {
