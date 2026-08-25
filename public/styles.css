@@ -861,3 +861,100 @@ tr.phantom td:first-child { color: #64748b; }
   .form-grid { grid-template-columns: 1fr; }
   .span-2 { grid-column: span 1; }
 }
+
+/* ===== SCM 분석 탭 ===== */
+.scm-wrap { display: flex; flex-direction: column; gap: 16px; }
+.scm-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.scm-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.scm-card span { display: block; color: var(--muted); font-size: 13px; }
+.scm-card strong { font-size: 22px; color: #0f172a; }
+.scm-card strong em { font-size: 13px; color: var(--muted); font-style: normal; font-weight: 500; }
+.scm-card.scm-c-ok strong { color: var(--primary-deep); }
+.scm-card.scm-c-danger { border-color: #fca5a5; }
+.scm-card.scm-c-danger span, .scm-card.scm-c-danger strong { color: var(--danger); }
+
+.scm-alerts { display: flex; flex-direction: column; gap: 6px; }
+.scm-alert { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border-radius: 8px; }
+.scm-alert.a-out { background: #fef2f2; }
+.scm-alert.a-low { background: #fffbeb; }
+.scm-alert .a-name { font-weight: 600; color: #0f172a; }
+.scm-alert.a-out .a-name { color: var(--danger); }
+.scm-alert .a-val { font-size: 13px; color: var(--muted); }
+.scm-alert .a-star { color: #b45309; font-weight: 700; font-size: 12px; }
+.scm-empty { color: var(--muted); font-size: 14px; padding: 8px; }
+
+.scm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.scm-item { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.scm-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; color: #0f172a; margin-bottom: 8px; }
+.scm-tag-ok { font-size: 12px; font-weight: 500; color: var(--primary-deep); background: var(--primary-soft); border-radius: 20px; padding: 3px 10px; }
+.scm-tag-bad { font-size: 12px; font-weight: 500; color: var(--danger); background: #fef2f2; border-radius: 20px; padding: 3px 10px; }
+.scm-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.scm-sz { width: 58px; text-align: right; font-size: 12px; color: var(--muted); }
+.scm-track { flex: 1; height: 15px; background: #f1f5f9; border-radius: 6px; overflow: hidden; }
+.scm-fill { height: 100%; border-radius: 6px; }
+.scm-fill.f-ok { background: var(--primary); }
+.scm-fill.f-low, .scm-fill.f-out { background: var(--danger); }
+.scm-fill.f-over { background: #d97706; }
+.scm-v { width: 42px; font-size: 12px; color: var(--muted); }
+.scm-note { font-size: 12px; color: var(--muted); background: var(--primary-soft); border: 1px solid var(--primary-line); border-radius: 10px; padding: 10px 14px; }
+
+/* SCM 즉시조치 — 품목별 묶음(안 A) */
+.scm-alert2 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 10px 12px; border-radius: 8px; }
+.scm-alert2.a-out { background: #fef2f2; }
+.scm-alert2.a-low { background: #fffbeb; }
+.scm-alert2 .a2-name { font-weight: 600; color: #0f172a; min-width: 130px; }
+.scm-alert2.a-out .a2-name { color: var(--danger); }
+.scm-alert2 .a2-count { font-size: 13px; font-weight: 500; color: var(--muted); }
+.scm-alert2 .a2-sizes { font-size: 13px; color: var(--muted); flex: 1; min-width: 150px; }
+.scm-alert2 .a2-short { font-size: 13px; font-weight: 600; color: #0f172a; margin-left: auto; }
+
+/* ① 연간 발주 계획 */
+.plan-desc { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.plan-ok { color: var(--primary-deep); font-weight: 500; }
+.plan-warn { color: #b45309; font-weight: 500; }
+.alloc-head { margin: 16px 0 8px; font-weight: 600; color: #0f172a; font-size: 14px; }
+.alloc-wrap { display: flex; flex-direction: column; gap: 8px; }
+.alloc-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.alloc-name { font-weight: 600; color: #0f172a; font-size: 13px; margin-right: 4px; }
+.alloc-chip { font-size: 12px; color: var(--primary-deep); background: var(--primary-soft); border: 1px solid var(--primary-line); border-radius: 16px; padding: 3px 10px; }
+
+/* ② 계절 소비 곡선 */
+.seas-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+.dot-win, .dot-sum { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+.dot-win { background: #2563eb; }
+.dot-sum { background: #d97706; }
+.seas-chart { display: flex; flex-direction: column; gap: 7px; }
+.seas-row { display: flex; align-items: center; gap: 10px; }
+.seas-m { width: 40px; text-align: right; font-size: 12px; color: var(--muted); }
+.seas-bars { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.seas-track { position: relative; background: #f1f5f9; border-radius: 5px; height: 13px; overflow: hidden; }
+.seas-fill { height: 100%; border-radius: 5px; }
+.seas-fill.s-win { background: #2563eb; }
+.seas-fill.s-sum { background: #d97706; }
+.seas-v { position: absolute; right: 6px; top: 0; line-height: 13px; font-size: 10px; color: #334155; }
+.seas-insight { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #0f172a; background: var(--primary-soft); border: 1px solid var(--primary-line); border-radius: 10px; padding: 10px 14px; }
+
+/* 소비 곡선 토글/품목선택 */
+.seas-seg { margin: 2px 0 12px; }
+.seas-select { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; background: #fff; color: #0f172a; }
+.seas-insight .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+
+/* 소비 랭킹 (인기 품목 / 사이즈별) */
+.rank-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 14px; }
+.rank-head { font-weight: 600; color: #0f172a; font-size: 13px; margin-bottom: 8px; }
+.rank-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.rank-sz { width: 118px; font-size: 12px; color: var(--muted); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rank-track { flex: 1; height: 14px; background: #f1f5f9; border-radius: 6px; overflow: hidden; }
+.rank-fill { height: 100%; border-radius: 6px; }
+.rank-v { width: 44px; font-size: 12px; color: #334155; }
+
+/* 순위 분기 필터 */
+.rank-period { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.rank-period-label { font-size: 13px; font-weight: 600; color: #0f172a; }
+.rank-qseg { flex-wrap: wrap; }
+
+/* 청구 조회: 권역×월 교차표 */
+.pivot-title { margin: 14px 0 8px; font-weight: 600; color: #0f172a; font-size: 14px; }
+.pivot-table th.num, .pivot-table td.num { text-align: right; white-space: nowrap; }
+.pivot-table tbody tr.pivot-total { background: var(--primary-soft); }
+.pivot-table tbody tr.pivot-total td { font-weight: 600; color: var(--primary-deep); }

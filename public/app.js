@@ -58,7 +58,28 @@ const pageMap = {
   pricing: ['단가 관리', '분출 청구용 단가를 설정합니다.'],
   billing: ['청구 조회', '분출 기준 청구금액을 담당자별로 조회합니다.'],
   analytics: ['분석 대시보드', '월별 입출고 추이와 재발주·회전율·수요예측을 한눈에 확인합니다.'],
+  scm: ['SCM 분석', '실시간 현재고와 수요(과거 이력+분출 누적)를 결합해 결품·과잉·발주 우선순위를 진단합니다.'],
   activity: ['활동 로그', '누가·언제·무엇을 했는지 기록을 확인합니다.']
+};
+
+// 과거 입출고 이력 기준 사이즈별 수요 기준선(제공 시트 '사이즈별 총계'). 실시간 분출이 쌓이면 합산된다.
+const SCM_DEMAND_BASELINE = {
+  '동계 셔츠': { '90': 10, '95': 60, '100': 133, '105': 123, '110': 73, '115': 39, '120': 5 },
+  '동계내피(이너패딩)': { '90': 7, '95': 52, '100': 121, '105': 127, '110': 84, '115': 39, '120': 13, '130': 1 },
+  '동계외피(춘추아우터)': { '90': 5, '95': 48, '100': 127, '105': 132, '110': 89, '115': 49, '120': 12 },
+  '동계 바지': { '28': 10, '30': 79, '32': 121, '34': 129, '36': 58, '38': 33, '40': 12 },
+  '조끼': { '90': 13, '95': 36, '100': 105, '105': 122, '110': 110, '115': 31, '120': 6 }
+};
+
+// 연간 발주 계획용: 품목당 최소발주수량(MOQ)과 시즌(필요 월). 리드타임 약 3~4개월.
+const SCM_MOQ = 1000;
+const SCM_LEADTIME_MONTHS = 4;
+const SCM_SEASON = {
+  '동계 셔츠': { season: '동계', needMonth: 10 },
+  '동계내피(이너패딩)': { season: '동계', needMonth: 10 },
+  '동계외피(춘추아우터)': { season: '동계', needMonth: 10 },
+  '동계 바지': { season: '동계', needMonth: 10 },
+  '조끼': { season: '하계', needMonth: 5 }
 };
 
 let state = loadState();
@@ -68,6 +89,8 @@ const dashFilter = { category: '전체', item: '전체', sort: 'default', status
 
 // 단가 관리 탭 필터 상태
 const pricingFilter = { category: '전체' };
+// 청구 조회 탭 필터 상태 (월 / 권역)
+const billingFilter = { month: 'all', region: 'all' };
 // 시공팀 대시보드 표시가격 대조용 (POST /api/prices 로 불러온 실제 노출값)
 let teamPriceMap = null;
 
@@ -170,7 +193,10 @@ const els = {
   verifyTeamPriceBtn: document.getElementById('verifyTeamPriceBtn'),
   pricingTableBody: document.getElementById('pricingTableBody'),
   billingSearch: document.getElementById('billingSearch'),
+  billingMonth: document.getElementById('billingMonth'),
+  billingRegion: document.getElementById('billingRegion'),
   billingSummaryCards: document.getElementById('billingSummaryCards'),
+  billingPivot: document.getElementById('billingPivot'),
   billingTableBody: document.getElementById('billingTableBody'),
   seedBtn: document.getElementById('seedBtn'),
   backupBtn: document.getElementById('backupBtn'),
@@ -201,7 +227,9 @@ const els = {
   activityPager: document.getElementById('activityPager'),
   activityPrev: document.getElementById('activityPrev'),
   activityNext: document.getElementById('activityNext'),
-  activityPageInfo: document.getElementById('activityPageInfo')
+  activityPageInfo: document.getElementById('activityPageInfo'),
+  scmPanel: document.getElementById('scmPanel'),
+  planningPanel: document.getElementById('planningPanel')
 };
 
 function init() {
@@ -248,6 +276,8 @@ function bindEvents() {
   els.auditImage.addEventListener('change', previewAuditImage);
   els.auditForm.addEventListener('submit', submitAudit);
   els.billingSearch.addEventListener('input', renderBilling);
+  els.billingMonth.addEventListener('change', () => { billingFilter.month = els.billingMonth.value; renderBilling(); });
+  els.billingRegion.addEventListener('change', () => { billingFilter.region = els.billingRegion.value; renderBilling(); });
   els.seedBtn.addEventListener('click', resetSeedData);
   els.backupBtn.addEventListener('click', downloadBackup);
   els.restoreInput.addEventListener('change', restoreBackup);
@@ -724,6 +754,7 @@ function renderAll() {
   renderAuditHistory();
   renderBilling();
   renderAnalytics();
+  renderScm();
 }
 
 function renderHeaderStats() {
@@ -736,6 +767,117 @@ function renderHeaderStats() {
     <div class="mini-stat"><span>분출 건수</span><strong>${issueCount}</strong></div>
     <div class="mini-stat"><span>청구 누계</span><strong>${formatCurrency(totalAmount)}</strong></div>
     <div class="mini-stat"><span>차이 발생 실사</span><strong>${diffCount}</strong></div>
+  `;
+}
+
+// ===== SCM 분석 탭: 실시간 현재고 + 수요(과거 이력 + 분출 누적) 결합 =====
+function renderScm() {
+  if (!els.scmPanel) return;
+  const rows = getNormalizedInventoryRows();
+
+  // 실시간 분출 수요 (name|size)
+  const liveDemand = {};
+  state.transactions.forEach(tx => {
+    if (tx.type !== '분출') return;
+    const it = getItemById(tx.itemId);
+    if (!it) return;
+    const k = it.name + '|' + it.size;
+    liveDemand[k] = (liveDemand[k] || 0) + Number(tx.quantity || 0);
+  });
+  const demandOf = (name, size) => {
+    const base = (SCM_DEMAND_BASELINE[name] && SCM_DEMAND_BASELINE[name][String(size)]) || 0;
+    return base + (liveDemand[name + '|' + size] || 0);
+  };
+  // 품목별 수요 상위 3사이즈
+  function topDemandSizes(name) {
+    return rows.filter(r => r.name === name)
+      .map(r => ({ size: String(r.size), d: demandOf(name, r.size) }))
+      .filter(x => x.d > 0).sort((a, b) => b.d - a.d).slice(0, 3).map(x => x.size);
+  }
+  // 상태: 기존 재고현황과 동일(품절/부족/여유) + 과잉 오버레이
+  const statusOf = (r) => {
+    const s = getStockStatus(r);
+    if (s !== 'ok') return s;
+    if (r.currentStock >= lowThresholdOf(r) * 3 && demandOf(r.name, r.size) === 0) return 'over';
+    return 'ok';
+  };
+
+  // 요약 카드
+  const totalFree = rows.reduce((a, r) => a + r.currentStock, 0);
+  const shortRows = rows.filter(r => getStockStatus(r) !== 'ok');
+  const cards = `
+    <div class="scm-cards">
+      <div class="scm-card"><span>전체 품목 수</span><strong>${rows.length}<em> 개</em></strong></div>
+      <div class="scm-card scm-c-ok"><span>총 여유 재고</span><strong>${totalFree.toLocaleString()}<em> 벌</em></strong></div>
+      <div class="scm-card scm-c-danger"><span>부족 · 품절</span><strong>${shortRows.length}<em> 건</em></strong></div>
+    </div>`;
+
+  // 즉시 조치 — 품목별로 묶기 (품절 있는 품목 먼저 → 부족분 큰 순)
+  const shortByName = {};
+  shortRows.forEach(r => { (shortByName[r.name] = shortByName[r.name] || []).push(r); });
+  const alertGroups = Object.keys(shortByName).map(name => {
+    const list = shortByName[name];
+    const tops = topDemandSizes(name);
+    const outs = list.filter(r => getStockStatus(r) === 'out').sort((a, b) => sizeNum(a.size) - sizeNum(b.size));
+    const lows = list.filter(r => getStockStatus(r) === 'low').sort((a, b) => sizeNum(a.size) - sizeNum(b.size));
+    const shortfall = list.reduce((a, r) => a + Math.max(0, lowThresholdOf(r) - r.currentStock), 0);
+    const parts = [];
+    if (outs.length) parts.push(outs.map(r => r.size).join('·') + ' 품절');
+    if (lows.length) parts.push(lows.map(r => r.size).join('·') + ' 부족');
+    const hasTop = list.some(r => tops.includes(String(r.size)));
+    return { name, sev: outs.length ? 0 : 1, outN: outs.length, lowN: lows.length, detail: parts.join(', '), shortfall, hasTop };
+  }).sort((a, b) => a.sev - b.sev || b.shortfall - a.shortfall);
+
+  const alerts = alertGroups.map(g => {
+    const count = [g.outN ? '품절 ' + g.outN : '', g.lowN ? '부족 ' + g.lowN : ''].filter(Boolean).join(' · ');
+    return `<div class="scm-alert2 ${g.outN ? 'a-out' : 'a-low'}">
+      <span class="a2-name">${g.outN ? '🔴' : '🟠'} ${g.name}${g.hasTop ? ' <b class="a-star">★수요상위</b>' : ''}</span>
+      <span class="a2-count">${count}</span>
+      <span class="a2-sizes">${g.detail}</span>
+      <span class="a2-short">부족분 약 ${g.shortfall.toLocaleString()}벌</span>
+    </div>`;
+  }).join('') || `<div class="scm-empty">부족·품절 품목이 없습니다.</div>`;
+
+  // 품목별 현재고 막대
+  const groups = [];
+  const seen = new Set();
+  rows.forEach(r => {
+    const key = r.category + '|' + r.name;
+    if (!seen.has(key)) { seen.add(key); groups.push({ category: r.category, name: r.name }); }
+  });
+  const barBlocks = groups.map(g => {
+    const list = rows.filter(r => r.category === g.category && r.name === g.name)
+      .sort((a, b) => sizeNum(a.size) - sizeNum(b.size));
+    const max = Math.max(1, ...list.map(r => r.currentStock));
+    const tops = topDemandSizes(g.name);
+    const bad = list.some(r => getStockStatus(r) !== 'ok');
+    const total = list.reduce((a, r) => a + r.currentStock, 0);
+    const rowsHtml = list.map(r => {
+      const st = statusOf(r);
+      const w = Math.max(2, Math.round((Math.max(r.currentStock, 0) / max) * 100));
+      const star = tops.includes(String(r.size)) ? ' ★' : '';
+      return `<div class="scm-row">
+        <span class="scm-sz">${r.size}${star}</span>
+        <div class="scm-track"><div class="scm-fill f-${st}" style="width:${w}%"></div></div>
+        <span class="scm-v">${r.currentStock}</span>
+      </div>`;
+    }).join('');
+    return `<div class="scm-item">
+      <div class="scm-item-head">${g.name}<span class="${bad ? 'scm-tag-bad' : 'scm-tag-ok'}">${bad ? '점검 필요' : '정상'} · ${total.toLocaleString()}벌</span></div>
+      ${rowsHtml}</div>`;
+  }).join('');
+
+  els.scmPanel.innerHTML = `
+    ${cards}
+    <div class="panel">
+      <div class="panel-head"><h3>🚨 즉시 조치 — 결품·부족</h3><span class="muted">★ = 과거+실시간 수요 상위 사이즈</span></div>
+      <div class="scm-alerts">${alerts}</div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>품목별 현재고 (실시간)</h3><span class="muted">초록=여유 · 빨강=부족/품절 · 주황=과잉 · ★=수요 상위</span></div>
+      <div class="scm-grid">${barBlocks}</div>
+    </div>
+    <div class="scm-note">현재고 = 플랫폼 실시간 · 수요(★) = 과거 이력 기준선 + 실시간 분출 누적. 분출이 쌓일수록 정확해집니다.</div>
   `;
 }
 
@@ -1455,11 +1597,27 @@ function savePriceInline(event) {
 
 function renderBilling() {
   const keyword = els.billingSearch.value.trim();
-  const rows = state.transactions.filter(tx => tx.type === '분출' && (!keyword || (tx.receiver || '').includes(keyword)));
+  const all = state.transactions.filter(tx => tx.type === '분출');
+
+  // 필터 옵션 채우기 (전체 데이터 기준) + 선택값 유지
+  const allMonths = [...new Set(all.map(tx => (tx.date || '').slice(0, 7)).filter(Boolean))].sort();
+  const allRegions = [...new Set(all.map(tx => tx.receiver || '미지정'))].sort();
+  if (billingFilter.month !== 'all' && !allMonths.includes(billingFilter.month)) billingFilter.month = 'all';
+  if (billingFilter.region !== 'all' && !allRegions.includes(billingFilter.region)) billingFilter.region = 'all';
+  els.billingMonth.innerHTML = `<option value="all">전체 월</option>` + allMonths.map(m => `<option value="${m}"${m === billingFilter.month ? ' selected' : ''}>${m}</option>`).join('');
+  els.billingRegion.innerHTML = `<option value="all">전체 권역</option>` + allRegions.map(r => `<option value="${r}"${r === billingFilter.region ? ' selected' : ''}>${r}</option>`).join('');
+
+  const rows = all.filter(tx =>
+    (!keyword || (tx.receiver || '').includes(keyword)) &&
+    (billingFilter.month === 'all' || (tx.date || '').slice(0, 7) === billingFilter.month) &&
+    (billingFilter.region === 'all' || (tx.receiver || '미지정') === billingFilter.region)
+  );
   const grouped = groupBy(rows, tx => tx.receiver || '미지정');
   els.billingSummaryCards.innerHTML = Object.entries(grouped).map(([receiver, list]) => `
     <div class="summary-card"><span>${receiver}</span><strong>${formatCurrency(list.reduce((acc, tx) => acc + (tx.amount || 0), 0))}</strong></div>
   `).join('') || `<div class="summary-card"><span>청구 데이터 없음</span><strong>₩0</strong></div>`;
+
+  renderBillingPivot(rows);
 
   els.billingTableBody.innerHTML = rows.map(tx => {
     const item = getItemById(tx.itemId);
@@ -1475,6 +1633,47 @@ function renderBilling() {
       </tr>
     `;
   }).join('') || `<tr><td colspan="7" class="empty-state">청구할 분출 내역이 없습니다.</td></tr>`;
+}
+
+// 권역(수령 담당자) × 월별 청구액 교차표
+function renderBillingPivot(rows) {
+  if (!els.billingPivot) return;
+  if (!rows.length) { els.billingPivot.innerHTML = ''; return; }
+
+  const months = [...new Set(rows.map(tx => (tx.date || '').slice(0, 7)).filter(Boolean))].sort();
+  const regions = [...new Set(rows.map(tx => tx.receiver || '미지정'))];
+  const cell = {}; // region -> month -> amount
+  regions.forEach(r => { cell[r] = {}; });
+  rows.forEach(tx => {
+    const r = tx.receiver || '미지정';
+    const m = (tx.date || '').slice(0, 7);
+    if (!m) return;
+    cell[r][m] = (cell[r][m] || 0) + (tx.amount || 0);
+  });
+  const mLabel = m => m.slice(2).replace('-', '.'); // 2026-08 -> 26.08
+  const rowTotal = r => months.reduce((a, m) => a + (cell[r][m] || 0), 0);
+  const colTotal = m => regions.reduce((a, r) => a + (cell[r][m] || 0), 0);
+  const grand = regions.reduce((a, r) => a + rowTotal(r), 0);
+  // 청구액 많은 권역 순 정렬
+  const sortedRegions = regions.slice().sort((a, b) => rowTotal(b) - rowTotal(a));
+
+  const head = `<tr><th>권역(수령)</th>${months.map(m => `<th class="num">${mLabel(m)}</th>`).join('')}<th class="num">합계</th></tr>`;
+  const body = sortedRegions.map(r => `
+    <tr>
+      <td>${r}</td>
+      ${months.map(m => `<td class="num">${cell[r][m] ? formatCurrency(cell[r][m]) : '-'}</td>`).join('')}
+      <td class="num"><strong>${formatCurrency(rowTotal(r))}</strong></td>
+    </tr>`).join('');
+  const foot = `<tr class="pivot-total"><td>합계</td>${months.map(m => `<td class="num">${formatCurrency(colTotal(m))}</td>`).join('')}<td class="num"><strong>${formatCurrency(grand)}</strong></td></tr>`;
+
+  els.billingPivot.innerHTML = `
+    <div class="pivot-title">권역 × 월별 청구액</div>
+    <div class="table-wrap">
+      <table class="pivot-table">
+        <thead>${head}</thead>
+        <tbody>${body}${foot}</tbody>
+      </table>
+    </div>`;
 }
 
 function resetSeedData() {
@@ -1687,10 +1886,183 @@ function renderAnalytics() {
   els.barChart.innerHTML = renderBarChartSvg(months);
   els.lineChart.innerHTML = renderLineChartSvg(stock);
 
+  renderPlanning();
   renderCategoryTable(year);
   renderReorderTable();
   renderTurnoverTable();
   renderForecastTable();
+}
+
+// ===== 계절 소비 곡선 (계절별 / 품목별 꺾은선) =====
+function seasonOfName(name) {
+  if (name.includes('동계')) return '동계';
+  if (name.includes('하계') || name === '조끼') return '하계';
+  return null; // 장갑·시공매트 등은 제외
+}
+// 보기 상태(계절별 / 품목별) — 재렌더 사이 유지
+const seasonalView = { mode: 'season', item: '', q: 'all' };
+
+// 최근 12개월 × 시리즈 꺾은선 SVG 생성 (series: [{name,color,values[]}])
+function scmLineChartSvg(labels, series) {
+  const W = 680, H = 240, L = 44, R = 16, T = 16, B = 30;
+  const pw = W - L - R, ph = H - T - B, n = labels.length;
+  const max = Math.max(1, ...series.flatMap(s => s.values));
+  const X = i => L + (n <= 1 ? 0 : (i / (n - 1)) * pw);
+  const Y = v => T + ph - (Math.max(v, 0) / max) * ph;
+  const grid = [0, 0.5, 1].map(f => {
+    const gy = (T + ph - f * ph).toFixed(1);
+    return `<line x1="${L}" y1="${gy}" x2="${W - R}" y2="${gy}" stroke="#e2e8f0"></line>` +
+      `<text x="${L - 6}" y="${(+gy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#94a3b8">${Math.round(max * f)}</text>`;
+  }).join('');
+  const lines = series.map((s, si) => {
+    const below = series.length > 1 && si === 1; // 2개 시리즈면 두번째는 아래쪽에 라벨
+    const pts = s.values.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+    const dots = s.values.map((v, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="3" fill="${s.color}"></circle>`).join('');
+    const labs = s.values.map((v, i) => {
+      if (v <= 0) return '';
+      let ly = Y(v) + (below ? 15 : -9);
+      ly = Math.min(T + ph - 3, Math.max(T + 9, ly)); // 차트 안쪽으로 clamp
+      // 흰색 외곽선(paint-order)로 선·다른 글자와 겹쳐도 읽히게
+      return `<text x="${X(i).toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="10" font-weight="600" fill="${s.color}" stroke="#fff" stroke-width="3" paint-order="stroke">${v}</text>`;
+    }).join('');
+    return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.5"></polyline>${dots}${labs}`;
+  }).join('');
+  const xLabels = labels.map((lb, i) => `<text x="${X(i).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#94a3b8">${lb}</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto;display:block;">${grid}${lines}${xLabels}</svg>`;
+}
+
+function renderPlanning() {
+  if (!els.planningPanel) return;
+
+  // 최근 12개월
+  const now = new Date();
+  const months = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ key: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'), label: (d.getMonth() + 1) + '월' });
+  }
+  const labels = months.map(m => m.label);
+  const idx = {}; months.forEach((m, i) => idx[m.key] = i);
+  const back = (label) => { let m = parseInt(label, 10) - SCM_LEADTIME_MONTHS; if (m <= 0) m += 12; return m + '월'; };
+
+  // 품목명 목록(분출 대상). 분류→품목 순.
+  const itemNames = getSortedItems().map(i => i.name).filter((v, i, a) => a.indexOf(v) === i);
+  if (seasonalView.mode === 'item' && !itemNames.includes(seasonalView.item)) seasonalView.item = itemNames[0] || '';
+
+  // 월별 순소비 집계: 분출(+) − 입고·반납 되돌림(−). 재고조정·실사조정·잉여출고는 미반영.
+  // (예: M사이즈 100 분출 후 100 다시 입고 → 순소비 0)
+  const monthly = (predicate) => {
+    const arr = new Array(12).fill(0);
+    state.transactions.forEach(tx => {
+      const it = getItemById(tx.itemId); if (!it || !predicate(it)) return;
+      const i = idx[(tx.date || '').slice(0, 7)]; if (i == null) return;
+      const q = Number(tx.quantity || 0);
+      if (tx.type === '분출') arr[i] += q;
+      else if (tx.type === '입고' || tx.type === '반납') arr[i] -= q; // 오출고 정정 상쇄
+    });
+    return arr.map(v => Math.max(0, v)); // 월 순소비는 음수 없이 표기
+  };
+
+  const seg = `
+    <div class="seg seas-seg">
+      <button type="button" data-smode="season" class="${seasonalView.mode === 'season' ? 'active' : ''}">계절별</button>
+      <button type="button" data-smode="item" class="${seasonalView.mode === 'item' ? 'active' : ''}">품목별</button>
+    </div>`;
+
+  let head, desc, chart, extra = '';
+
+  if (seasonalView.mode === 'item') {
+    const sel = seasonalView.item;
+    const values = monthly(it => it.name === sel);
+    const color = seasonOfName(sel) === '동계' ? '#2563eb' : (seasonOfName(sel) === '하계' ? '#d97706' : '#16a34a');
+    chart = scmLineChartSvg(labels, [{ name: sel, color, values }]);
+    const options = itemNames.map(nm => `<option value="${nm}"${nm === sel ? ' selected' : ''}>${nm}</option>`).join('');
+    head = `<div class="seas-legend"><select id="seasItemSelect" class="seas-select">${options}</select></div>`;
+    desc = `선택한 품목의 <b>월별 순소비</b>(분출 − 되돌림 상쇄) 추이입니다.`;
+    const hasData = values.some(v => v > 0);
+    const peakI = hasData ? values.indexOf(Math.max(...values)) : -1;
+    const insightHtml = hasData
+      ? `<div class="seas-insight"><div><b class="dot" style="background:${color}"></b> ${sel} 소비 정점 <b>${labels[peakI]}</b> → 리드타임 감안 <b>${back(labels[peakI])}</b>경 발주 권장</div></div>`
+      : `<div class="muted" style="padding:8px 2px;">이 품목은 아직 분출 기록이 적습니다. 데이터가 쌓일수록 곡선이 선명해집니다.</div>`;
+
+    // 랭킹: 인기 품목 + 선택 품목의 사이즈별 순위 (총 순소비 = 분출 − 되돌림)
+    const qOk = (ds) => {
+      if (seasonalView.q === 'all') return true;
+      const m = parseInt((ds || '').slice(5, 7), 10);
+      return ({ q1: m >= 1 && m <= 3, q2: m >= 4 && m <= 6, q3: m >= 7 && m <= 9, q4: m >= 10 && m <= 12 })[seasonalView.q] || false;
+    };
+    const prodNet = {}, sizeNetSel = {};
+    state.transactions.forEach(tx => {
+      const it = getItemById(tx.itemId); if (!it || !qOk(tx.date)) return;
+      const q = Number(tx.quantity || 0);
+      const sign = tx.type === '분출' ? q : ((tx.type === '입고' || tx.type === '반납') ? -q : 0);
+      if (!sign) return;
+      prodNet[it.name] = (prodNet[it.name] || 0) + sign;
+      if (it.name === sel) sizeNetSel[it.size] = (sizeNetSel[it.size] || 0) + sign;
+    });
+    const bars = (arr, hiFn, hiColor) => arr.map(a => `<div class="rank-row"><span class="rank-sz" title="${a.label}">${a.label}</span><div class="rank-track"><div class="rank-fill" style="width:${Math.round(a.v / Math.max(1, ...arr.map(x => x.v)) * 100)}%;background:${hiFn(a) && a.v > 0 ? hiColor : '#cbd5e1'}"></div></div><span class="rank-v">${a.v}</span></div>`).join('');
+    const prodRank = itemNames.map(nm => ({ label: nm, v: Math.max(0, prodNet[nm] || 0) })).sort((a, b) => b.v - a.v);
+    const selSizes = [...new Set(state.items.filter(i => i.name === sel).map(i => i.size))];
+    const sizeRank = selSizes.map(sz => ({ label: sz, v: Math.max(0, sizeNetSel[sz] || 0) })).sort((a, b) => b.v - a.v);
+    const topSize = sizeRank[0] ? sizeRank[0].label : null;
+
+    const qLabels = { all: '전체', q1: '1~3월', q2: '4~6월', q3: '7~9월', q4: '10~12월' };
+    const qSeg = `<div class="seg rank-qseg">${['all', 'q1', 'q2', 'q3', 'q4'].map(k => `<button type="button" data-quarter="${k}" class="${seasonalView.q === k ? 'active' : ''}">${qLabels[k]}</button>`).join('')}</div>`;
+
+    extra = `
+      <div class="rank-period"><span class="rank-period-label">순위 기간</span>${qSeg}</div>
+      <div class="rank-grid">
+        <div class="rank-wrap">
+          <div class="rank-head">🏆 인기 품목 순위 <span class="muted" style="font-weight:400;">(${qLabels[seasonalView.q]} · 선택 품목 강조)</span></div>
+          ${bars(prodRank, a => a.label === sel, '#16a34a') || '<div class="muted">데이터 없음</div>'}
+        </div>
+        <div class="rank-wrap">
+          <div class="rank-head">📏 ${sel} · 사이즈별 순위 <span class="muted" style="font-weight:400;">(1위 강조)</span></div>
+          ${bars(sizeRank, a => a.label === topSize, color) || '<div class="muted">이 품목의 소비 기록이 아직 없습니다.</div>'}
+        </div>
+      </div>
+      ${insightHtml}`;
+  } else {
+    const win = monthly(it => seasonOfName(it.name) === '동계');
+    const sum = monthly(it => seasonOfName(it.name) === '하계');
+    chart = scmLineChartSvg(labels, [
+      { name: '동계', color: '#2563eb', values: win },
+      { name: '하계', color: '#d97706', values: sum }
+    ]);
+    head = `<div class="seas-legend"><span><b class="dot-win"></b>동계 소비</span><span><b class="dot-sum"></b>하계 소비</span></div>`;
+    desc = `품목을 동계/하계로 나눠 <b>월별 순소비</b>(분출 − 되돌림 상쇄) 추이를 봅니다. (동계=동계셔츠·이너패딩·춘추아우터·동계바지 / 하계=조끼·하계셔츠·하계바지)`;
+    const hasData = win.some(v => v > 0) || sum.some(v => v > 0);
+    const pk = (a) => a.some(v => v > 0) ? labels[a.indexOf(Math.max(...a))] : null;
+    const pW = pk(win), pS = pk(sum);
+    extra = hasData
+      ? `<div class="seas-insight">
+          ${pW ? `<div><b class="dot-win"></b> 동계 소비 정점 <b>${pW}</b> → 리드타임 감안 <b>${back(pW)}</b>경 발주 권장</div>` : ''}
+          ${pS ? `<div><b class="dot-sum"></b> 하계 소비 정점 <b>${pS}</b> → 리드타임 감안 <b>${back(pS)}</b>경 발주 권장</div>` : ''}
+        </div>`
+      : `<div class="muted" style="padding:8px 2px;">아직 분출(소비) 기록이 적어 계절 패턴이 뚜렷하지 않습니다. 분출 데이터가 쌓일수록 곡선이 선명해집니다.</div>`;
+  }
+
+  els.planningPanel.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <h3>📈 소비 곡선</h3>
+        ${head}
+      </div>
+      ${seg}
+      <p class="plan-desc">${desc} 소비 정점보다 <b>리드타임(약 ${SCM_LEADTIME_MONTHS}개월) 앞서</b> 발주해야 결품을 피합니다.<br><span class="muted" style="font-size:12px;">※ 잘못 분출 후 다시 입고(되돌림)한 수량은 상쇄됩니다. 정정은 같은 달에 기록하면 정확히 0이 됩니다. 대량 매입 입고가 있는 달은 소비가 낮게 보일 수 있습니다.</span></p>
+      <div class="seas-chart">${chart}</div>
+      ${extra}
+    </div>`;
+
+  // 이벤트(재렌더마다 새 노드에 부착)
+  els.planningPanel.querySelectorAll('[data-smode]').forEach(btn => {
+    btn.addEventListener('click', () => { seasonalView.mode = btn.dataset.smode; renderPlanning(); });
+  });
+  const selEl = document.getElementById('seasItemSelect');
+  if (selEl) selEl.addEventListener('change', () => { seasonalView.item = selEl.value; renderPlanning(); });
+  els.planningPanel.querySelectorAll('[data-quarter]').forEach(btn => {
+    btn.addEventListener('click', () => { seasonalView.q = btn.dataset.quarter; renderPlanning(); });
+  });
 }
 
 function renderCategoryTable(year) {
