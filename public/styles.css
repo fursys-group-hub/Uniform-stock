@@ -958,3 +958,7 @@ tr.phantom td:first-child { color: #64748b; }
 .pivot-table th.num, .pivot-table td.num { text-align: right; white-space: nowrap; }
 .pivot-table tbody tr.pivot-total { background: var(--primary-soft); }
 .pivot-table tbody tr.pivot-total td { font-weight: 600; color: var(--primary-deep); }
+
+/* 사이즈 × 월 수요 히트맵 */
+.heat-table td.heat-cell { text-align: center; font-size: 12px; font-weight: 600; }
+.heat-table th, .heat-table td:first-child { white-space: nowrap; }

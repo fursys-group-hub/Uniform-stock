@@ -2006,6 +2006,32 @@ function renderPlanning() {
     const sizeRank = selSizes.map(sz => ({ label: sz, v: Math.max(0, sizeNetSel[sz] || 0) })).sort((a, b) => b.v - a.v);
     const topSize = sizeRank[0] ? sizeRank[0].label : null;
 
+    // 사이즈 × 월 순소비 히트맵 (선택 품목, 최근 12개월) — 발주 배분 판단용
+    const heatSizes = [...new Set(state.items.filter(i => i.name === sel).map(i => i.size))];
+    const hm = {}; heatSizes.forEach(s => hm[s] = new Array(12).fill(0));
+    state.transactions.forEach(tx => {
+      const it = getItemById(tx.itemId); if (!it || it.name !== sel || !hm[it.size]) return;
+      const i = idx[(tx.date || '').slice(0, 7)]; if (i == null) return;
+      const q = Number(tx.quantity || 0);
+      if (tx.type === '분출') hm[it.size][i] += q;
+      else if (tx.type === '입고' || tx.type === '반납') hm[it.size][i] -= q;
+    });
+    heatSizes.forEach(s => hm[s] = hm[s].map(v => Math.max(0, v)));
+    const rowTot = s => hm[s].reduce((a, v) => a + v, 0);
+    const heatMax = Math.max(1, ...heatSizes.flatMap(s => hm[s]));
+    const heatRows = heatSizes.slice().sort((a, b) => rowTot(b) - rowTot(a));
+    const heatCell = v => {
+      const a = v / heatMax;
+      return `<td class="num heat-cell" style="background:rgba(22,163,74,${(a * 0.9).toFixed(3)});color:${a > 0.55 ? '#fff' : '#0f172a'}">${v || ''}</td>`;
+    };
+    const heatHtml = heatRows.some(s => rowTot(s) > 0) ? `
+      <div class="pivot-title" style="margin-top:18px;">🔥 ${sel} · 사이즈 × 월 수요 히트맵 <span class="muted" style="font-weight:400;">(순소비 · 진할수록 수요↑ · 수요 많은 사이즈 순)</span></div>
+      <div class="table-wrap"><table class="pivot-table heat-table">
+        <thead><tr><th>사이즈</th>${labels.map(l => `<th class="num">${l}</th>`).join('')}<th class="num">합계</th></tr></thead>
+        <tbody>${heatRows.map(s => `<tr><td>${s}</td>${hm[s].map(heatCell).join('')}<td class="num"><strong>${rowTot(s)}</strong></td></tr>`).join('')}</tbody>
+      </table></div>
+      <p class="plan-desc" style="margin-top:8px;">📌 발주 참고: 위쪽(진한) 사이즈는 <b>많이</b>, 아래쪽(옅은) 사이즈는 <b>적게</b> 발주. 가로 방향으로 색이 진해지면 <b>수요 증가 추세</b>입니다.</p>` : '';
+
     const qLabels = { all: '전체', q1: '1~3월', q2: '4~6월', q3: '7~9월', q4: '10~12월' };
     const qSeg = `<div class="seg rank-qseg">${['all', 'q1', 'q2', 'q3', 'q4'].map(k => `<button type="button" data-quarter="${k}" class="${seasonalView.q === k ? 'active' : ''}">${qLabels[k]}</button>`).join('')}</div>`;
 
@@ -2021,6 +2047,7 @@ function renderPlanning() {
           ${bars(sizeRank, a => a.label === topSize, color) || '<div class="muted">이 품목의 소비 기록이 아직 없습니다.</div>'}
         </div>
       </div>
+      ${heatHtml}
       ${insightHtml}`;
   } else {
     const win = monthly(it => seasonOfName(it.name) === '동계');
