@@ -775,18 +775,28 @@ function renderScm() {
   if (!els.scmPanel) return;
   const rows = getNormalizedInventoryRows();
 
-  // 실시간 분출 수요 (name|size)
-  const liveDemand = {};
+  // ★수요상위 기준: 최근 3개월(직전 3개 완료월) 순소비(분출 − 되돌림) 롤링.
+  // 그 기간 데이터가 없는 품목만 과거 기준선을 보조로 사용(데이터 쌓이면 자동으로 최근값 전환).
+  const _now = new Date();
+  const winKeys = new Set();
+  for (let off = 1; off <= 3; off++) {
+    const d = new Date(_now.getFullYear(), _now.getMonth() - off, 1);
+    winKeys.add(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  }
+  const recentNet = {};
   state.transactions.forEach(tx => {
-    if (tx.type !== '분출') return;
-    const it = getItemById(tx.itemId);
-    if (!it) return;
-    const k = it.name + '|' + it.size;
-    liveDemand[k] = (liveDemand[k] || 0) + Number(tx.quantity || 0);
+    const it = getItemById(tx.itemId); if (!it) return;
+    if (!winKeys.has((tx.date || '').slice(0, 7))) return;
+    const q = Number(tx.quantity || 0);
+    const sign = tx.type === '분출' ? q : ((tx.type === '입고' || tx.type === '반납') ? -q : 0);
+    if (!sign) return;
+    recentNet[it.name + '|' + it.size] = (recentNet[it.name + '|' + it.size] || 0) + sign;
   });
+  const recentProdTotal = {};
+  rows.forEach(r => { recentProdTotal[r.name] = (recentProdTotal[r.name] || 0) + Math.max(0, recentNet[r.name + '|' + r.size] || 0); });
   const demandOf = (name, size) => {
-    const base = (SCM_DEMAND_BASELINE[name] && SCM_DEMAND_BASELINE[name][String(size)]) || 0;
-    return base + (liveDemand[name + '|' + size] || 0);
+    if ((recentProdTotal[name] || 0) > 0) return Math.max(0, recentNet[name + '|' + size] || 0); // 최근 3개월 실데이터
+    return (SCM_DEMAND_BASELINE[name] && SCM_DEMAND_BASELINE[name][String(size)]) || 0;            // 보조: 과거 기준선
   };
   // 품목별 수요 상위 3사이즈
   function topDemandSizes(name) {
