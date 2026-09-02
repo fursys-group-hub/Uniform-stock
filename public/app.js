@@ -2083,7 +2083,7 @@ function renderPlanning() {
     <div class="panel">
       <div class="panel-head">
         <h3>📈 소비 곡선</h3>
-        ${head}
+        <div class="inline-filters">${head}<button type="button" id="exportConsumeBtn" class="export-btn" title="최근 12개월 품목·사이즈별 월별 분출량(순소비)을 엑셀(CSV)로 저장">⬇ 월별 분출량 엑셀</button></div>
       </div>
       ${seg}
       <p class="plan-desc">${desc} 소비 정점보다 <b>리드타임(약 ${SCM_LEADTIME_MONTHS}개월) 앞서</b> 발주해야 결품을 피합니다.<br><span class="muted" style="font-size:12px;">※ 잘못 분출 후 다시 입고(되돌림)한 수량은 상쇄됩니다. 정정은 같은 달에 기록하면 정확히 0이 됩니다. 대량 매입 입고가 있는 달은 소비가 낮게 보일 수 있습니다.</span></p>
@@ -2100,6 +2100,42 @@ function renderPlanning() {
   els.planningPanel.querySelectorAll('[data-quarter]').forEach(btn => {
     btn.addEventListener('click', () => { seasonalView.q = btn.dataset.quarter; renderPlanning(); });
   });
+  const eb = document.getElementById('exportConsumeBtn');
+  if (eb) eb.addEventListener('click', exportConsumptionCsv);
+}
+
+// 최근 12개월 품목·사이즈별 월별 분출량(순소비 = 분출 − 되돌림)을 엑셀(CSV)로 내보내기
+function exportConsumptionCsv() {
+  const now = new Date();
+  const months = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  }
+  const idx = {}; months.forEach((m, i) => idx[m] = i);
+  const perItem = new Map();
+  state.items.forEach(it => perItem.set(it.id, new Array(12).fill(0)));
+  state.transactions.forEach(tx => {
+    const arr = perItem.get(tx.itemId); if (!arr) return;
+    const i = idx[(tx.date || '').slice(0, 7)]; if (i == null) return;
+    const q = Number(tx.quantity || 0);
+    if (tx.type === '분출') arr[i] += q;
+    else if (tx.type === '입고' || tx.type === '반납') arr[i] -= q;
+  });
+  const header = ['분류', '품목', '사이즈', ...months, '합계'];
+  const body = getSortedItems().map(it => {
+    const arr = (perItem.get(it.id) || new Array(12).fill(0)).map(v => Math.max(0, v));
+    return [it.category, it.name, it.size, ...arr, arr.reduce((a, v) => a + v, 0)];
+  });
+  const esc = (c) => { const s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = [header, ...body].map(r => r.map(esc).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `월별분출량_${now.toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function renderCategoryTable(year) {
