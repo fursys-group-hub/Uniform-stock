@@ -2107,14 +2107,25 @@ function renderPlanning() {
 // 최근 12개월 품목·사이즈별 월별 분출량(순소비 = 분출 − 되돌림)을 엑셀(CSV)로 내보내기
 function exportConsumptionCsv() {
   const now = new Date();
+  const key = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  // 말일 기준(완결된 달)만: 진행 중인 이번 달 제외, 지난달까지
+  const endDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const endKey = key(endDate);
+  const relTypes = new Set(['분출', '입고', '반납']);
+  const dataMonths = [...new Set(state.transactions.filter(t => relTypes.has(t.type)).map(t => (t.date || '').slice(0, 7)).filter(Boolean))]
+    .filter(m => m <= endKey).sort();
+  // 데이터가 있는 첫 달 ~ 지난달 전체(연속). 없으면 최근 12개 완결월. 최대 36개월.
+  let startDate;
+  if (dataMonths.length) { const [sy, sm] = dataMonths[0].split('-').map(Number); startDate = new Date(sy, sm - 1, 1); }
+  else { startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 11, 1); }
+  const cap = new Date(endDate.getFullYear(), endDate.getMonth() - 35, 1);
+  if (startDate < cap) startDate = cap;
   const months = [];
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
-  }
+  for (let d = new Date(startDate); d <= endDate; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) months.push(key(d));
+
   const idx = {}; months.forEach((m, i) => idx[m] = i);
   const perItem = new Map();
-  state.items.forEach(it => perItem.set(it.id, new Array(12).fill(0)));
+  state.items.forEach(it => perItem.set(it.id, new Array(months.length).fill(0)));
   state.transactions.forEach(tx => {
     const arr = perItem.get(tx.itemId); if (!arr) return;
     const i = idx[(tx.date || '').slice(0, 7)]; if (i == null) return;
@@ -2124,7 +2135,7 @@ function exportConsumptionCsv() {
   });
   const header = ['분류', '품목', '사이즈', ...months, '합계'];
   const body = getSortedItems().map(it => {
-    const arr = (perItem.get(it.id) || new Array(12).fill(0)).map(v => Math.max(0, v));
+    const arr = (perItem.get(it.id) || new Array(months.length).fill(0)).map(v => Math.max(0, v));
     return [it.category, it.name, it.size, ...arr, arr.reduce((a, v) => a + v, 0)];
   });
   const esc = (c) => { const s = String(c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
