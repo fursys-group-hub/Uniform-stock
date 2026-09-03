@@ -465,7 +465,8 @@ async function sendRequest(){
   if(!validateCart())return;
   // 품목 목록만 전송 — "주문품목" 헤더/제목 볼드는 슬랙 템플릿에서 처리
   const items=[...cart.values()].map(it=>`- ${it.row.name} - ${it.row.size} - ${it.qty}EA`).join('\n');
-  const payload={requester:$('reqName').value.trim()||'(이름 미입력)',region:$('reqRegion').value.trim()||'(권역 미입력)',center:$('reqCenter').value.trim(),items};
+  const lines=[...cart.values()].map(it=>({name:it.row.name,size:it.row.size,qty:Number(it.qty)||0}));
+  const payload={requester:$('reqName').value.trim()||'(이름 미입력)',region:$('reqRegion').value.trim()||'(권역 미입력)',center:$('reqCenter').value.trim(),items,lines};
   try{
     const res=await fetch((CONFIG.API_BASE||'')+'/api/uniform-request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!res.ok)throw new Error('HTTP '+res.status);

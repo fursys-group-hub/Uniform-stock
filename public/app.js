@@ -53,6 +53,7 @@ const pageMap = {
   dashboard: ['재고 현황', '품목/사이즈별 현재 재고와 단가를 확인합니다.'],
   transactions: ['수불 등록', '입고·분출·반납·조정 내역을 등록합니다.'],
   history: ['수불 이력', '누가 언제 무엇을 처리했는지 확인합니다.'],
+  reqsum: ['요청 합계', '기간별 시공팀 요청을 품목·사이즈별로 합산해 창고 준비 수량을 냅니다.'],
   audit: ['실사 등록', '전산수량과 실사수량 차이를 기록하고 조정합니다.'],
   'audit-history': ['실사 이력', '실사 기록과 점검 이미지를 확인합니다.'],
   pricing: ['단가 관리', '분출 청구용 단가를 설정합니다.'],
@@ -229,7 +230,15 @@ const els = {
   activityNext: document.getElementById('activityNext'),
   activityPageInfo: document.getElementById('activityPageInfo'),
   scmPanel: document.getElementById('scmPanel'),
-  planningPanel: document.getElementById('planningPanel')
+  planningPanel: document.getElementById('planningPanel'),
+  reqsumPreset: document.getElementById('reqsumPreset'),
+  reqsumFrom: document.getElementById('reqsumFrom'),
+  reqsumTo: document.getElementById('reqsumTo'),
+  reqsumLoad: document.getElementById('reqsumLoad'),
+  reqsumBody: document.getElementById('reqsumBody'),
+  reqsumSlack: document.getElementById('reqsumSlack'),
+  reqsumCopy: document.getElementById('reqsumCopy'),
+  reqsumCsv: document.getElementById('reqsumCsv')
 };
 
 function init() {
@@ -278,6 +287,11 @@ function bindEvents() {
   els.billingSearch.addEventListener('input', renderBilling);
   els.billingMonth.addEventListener('change', () => { billingFilter.month = els.billingMonth.value; renderBilling(); });
   els.billingRegion.addEventListener('change', () => { billingFilter.region = els.billingRegion.value; renderBilling(); });
+  els.reqsumLoad.addEventListener('click', loadRequests);
+  els.reqsumPreset.addEventListener('click', onReqsumPreset);
+  els.reqsumSlack.addEventListener('click', sendReqsumSlack);
+  els.reqsumCopy.addEventListener('click', copyReqsum);
+  els.reqsumCsv.addEventListener('click', exportReqsumCsv);
   els.seedBtn.addEventListener('click', resetSeedData);
   els.backupBtn.addEventListener('click', downloadBackup);
   els.restoreInput.addEventListener('change', restoreBackup);
@@ -568,6 +582,7 @@ function onTabClick(event) {
   els.pageTitle.textContent = title;
   els.pageDesc.textContent = desc;
   if (tab === 'activity') renderActivity();
+  if (tab === 'reqsum') openReqsum();
 }
 
 // 분류 → 품목 → 사이즈(숫자) 순으로 정렬된 품목 목록
@@ -1684,6 +1699,121 @@ function renderBillingPivot(rows) {
         <tbody>${body}${foot}</tbody>
       </table>
     </div>`;
+}
+
+// ===== 요청 합계 (창고 준비 수량) =====
+let reqsumRows = [];
+
+function fmtDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function setReqsumWeek(weekOffset) {
+  const d = new Date();
+  const dayFromMon = (d.getDay() + 6) % 7; // 월=0
+  const mon = new Date(d); mon.setDate(d.getDate() - dayFromMon + weekOffset * 7);
+  const fri = new Date(mon); fri.setDate(mon.getDate() + 4);
+  els.reqsumFrom.value = fmtDate(mon);
+  els.reqsumTo.value = fmtDate(fri);
+}
+function onReqsumPreset(event) {
+  const btn = event.target.closest('button[data-preset]'); if (!btn) return;
+  els.reqsumPreset.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  setReqsumWeek(btn.dataset.preset === 'lastweek' ? -1 : 0);
+  loadRequests();
+}
+function openReqsum() {
+  if (!els.reqsumFrom.value || !els.reqsumTo.value) setReqsumWeek(0);
+  loadRequests();
+}
+async function loadRequests() {
+  const from = els.reqsumFrom.value, to = els.reqsumTo.value;
+  if (!from || !to) { els.reqsumBody.innerHTML = '<div class="muted" style="padding:8px 2px;">기간을 선택하세요.</div>'; return; }
+  els.reqsumBody.innerHTML = '<div class="muted" style="padding:8px 2px;">불러오는 중…</div>';
+  try {
+    reqsumRows = await api(`/api/requests?from=${from}&to=${to}`);
+    renderReqsum();
+  } catch (e) {
+    reqsumRows = [];
+    els.reqsumBody.innerHTML = `<div class="muted" style="padding:8px 2px;">불러오기 실패: ${e.message}</div>`;
+  }
+}
+function aggregateRequests() {
+  const map = new Map();
+  reqsumRows.forEach(r => (r.lines || []).forEach(l => {
+    const name = l.name || '', size = l.size || '';
+    const k = name + '|' + size;
+    const cur = map.get(k) || { name, size, qty: 0 };
+    cur.qty += Number(l.qty) || 0;
+    map.set(k, cur);
+  }));
+  return [...map.values()].filter(x => x.qty > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko') || sizeNum(a.size) - sizeNum(b.size));
+}
+function renderReqsum() {
+  const agg = aggregateRequests();
+  const total = agg.reduce((a, x) => a + x.qty, 0);
+  if (!agg.length) {
+    els.reqsumBody.innerHTML = '<div class="muted" style="padding:8px 2px;">해당 기간 요청이 없습니다. (요청 저장은 이 기능 배포 이후부터 쌓입니다)</div>';
+    return;
+  }
+  let curName = '';
+  const bodyRows = agg.map(x => {
+    const head = x.name !== curName; curName = x.name;
+    return `<tr>
+      <td>${head ? x.name : ''}</td>
+      <td>${x.size}</td>
+      <td class="num"><strong>${x.qty.toLocaleString()}</strong></td>
+    </tr>`;
+  }).join('');
+  els.reqsumBody.innerHTML = `
+    <div class="cards-grid" style="margin-bottom:12px;">
+      <div class="summary-card"><span>요청 건수</span><strong>${reqsumRows.length}건</strong></div>
+      <div class="summary-card"><span>품목·사이즈 종류</span><strong>${agg.length}종</strong></div>
+      <div class="summary-card"><span>총 준비 수량</span><strong>${total.toLocaleString()}개</strong></div>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>품목</th><th>사이즈</th><th class="num">준비 수량</th></tr></thead>
+      <tbody>${bodyRows}<tr class="pivot-total"><td>합계</td><td></td><td class="num"><strong>${total.toLocaleString()}</strong></td></tr></tbody>
+    </table></div>`;
+}
+function buildReqsumText() {
+  const agg = aggregateRequests();
+  const total = agg.reduce((a, x) => a + x.qty, 0);
+  const lines = ['[준비 필요 수량]', `기간: ${els.reqsumFrom.value} ~ ${els.reqsumTo.value}`, `요청 ${reqsumRows.length}건 · 총 ${total.toLocaleString()}개`, '─────────────────────────────'];
+  let curName = '';
+  agg.forEach(x => { if (x.name !== curName) { lines.push(`▪ ${x.name}`); curName = x.name; } lines.push(`   ${x.size} - ${x.qty}개`); });
+  return lines.join('\n');
+}
+async function sendReqsumSlack() {
+  if (!aggregateRequests().length) { alert('보낼 합계가 없습니다.'); return; }
+  const text = buildReqsumText();
+  try {
+    await api('/api/requests/notify', { method: 'POST', body: { text } });
+    alert('슬랙에 합계를 보냈습니다.');
+  } catch (e) {
+    if (String(e.message).includes('summary-webhook-missing')) {
+      copyReqsum(true);
+      alert('요약용 슬랙 웹훅이 아직 설정되지 않아, 합계를 클립보드에 복사했습니다.\n슬랙에 붙여넣으세요. (관리자: 서버 환경변수 SLACK_SUMMARY_WEBHOOK 설정 시 원클릭 전송됩니다)');
+    } else alert('전송 실패: ' + e.message);
+  }
+}
+function copyReqsum(silent) {
+  if (!aggregateRequests().length) { if (!silent) alert('복사할 합계가 없습니다.'); return; }
+  const text = buildReqsumText();
+  if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+  if (!silent) alert('합계를 복사했습니다. 슬랙에 붙여넣으세요.');
+}
+function exportReqsumCsv() {
+  const agg = aggregateRequests();
+  if (!agg.length) { alert('내보낼 합계가 없습니다.'); return; }
+  const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = [['품목', '사이즈', '준비수량'].map(esc).join(',')];
+  agg.forEach(x => lines.push([x.name, x.size, x.qty].map(esc).join(',')));
+  const csv = '﻿' + lines.join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `요청합계_${els.reqsumFrom.value}_${els.reqsumTo.value}.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
 function resetSeedData() {

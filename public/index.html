@@ -36,6 +36,7 @@
         <div class="nav-group">📦 입·출고</div>
         <button class="tab-btn" data-tab="transactions">수불 등록</button>
         <button class="tab-btn" data-tab="history">수불 이력</button>
+        <button class="tab-btn" data-tab="reqsum">요청 합계</button>
 
         <div class="nav-group">🔍 실사</div>
         <button class="tab-btn" data-tab="audit">실사 등록</button>
@@ -111,6 +112,31 @@
 
       <section class="tab-panel" data-panel="scm">
         <div id="scmPanel" class="scm-wrap"></div>
+      </section>
+
+      <section class="tab-panel" data-panel="reqsum">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>요청 합계 <span class="stamp">창고 준비 수량</span></h3>
+            <div class="inline-filters">
+              <div class="seg" id="reqsumPreset">
+                <button type="button" data-preset="thisweek" class="active">이번 주(월~금)</button>
+                <button type="button" data-preset="lastweek">지난 주</button>
+              </div>
+              <input type="date" id="reqsumFrom" />
+              <span style="color:var(--muted)">~</span>
+              <input type="date" id="reqsumTo" />
+              <button type="button" id="reqsumLoad" class="mini-btn">조회</button>
+            </div>
+          </div>
+          <p class="plan-desc">선택 기간의 <b>모든 권역·요청자 요청을 품목·사이즈별로 합산</b>합니다. (개별 주문 슬랙 메시지는 그대로 유지) <span class="muted" style="font-size:12px;">※ 합산 대상은 이 기능 배포 이후 접수된 요청부터입니다.</span></p>
+          <div id="reqsumBody"></div>
+          <div class="form-actions" style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button type="button" id="reqsumSlack" class="primary-btn">📨 슬랙에 합계 보내기</button>
+            <button type="button" id="reqsumCopy" class="ghost-btn dark-ghost">📋 합계 복사</button>
+            <button type="button" id="reqsumCsv" class="export-btn">⬇ 엑셀</button>
+          </div>
+        </div>
       </section>
 
       <section class="tab-panel" data-panel="transactions">
@@ -500,6 +526,6 @@
     </article>
   </template>
 
-  <script src="./app.js?v=41"></script>
+  <script src="./app.js?v=42"></script>
 </body>
 </html>
