@@ -60,9 +60,17 @@ async function ensureRequestsTable() {
       lines jsonb not null default '[]'
     )`);
     await pool.query('create index if not exists idx_req_date on uniform_requests(req_date)');
+    // 앱 설정(요약 웹훅 등) — 배포 환경변수 대신 DB에 보관(기존 앱 env 갱신 불가 대응)
+    await pool.query('create table if not exists app_config (key text primary key, value text, updated_at timestamptz not null default now())');
   } catch (e) { console.error('[requests] ensure table', e.message); }
 }
 ensureRequestsTable();
+
+// 설정값 조회(app_config). 없으면 null.
+async function getConfig(key) {
+  try { const q = await pool.query('select value from app_config where key=$1', [key]); return q.rows[0] ? q.rows[0].value : null; }
+  catch { return null; }
+}
 
 // ---- 행 ↔ 앱 객체 매핑 ----
 const asDate = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d);
@@ -164,10 +172,11 @@ app.get('/api/requests', requireAuth, async (req, res) => {
 // 관리자: 합계 요약을 슬랙(요약용 Incoming Webhook)에 게시
 app.post('/api/requests/notify', requireAuth, async (req, res) => {
   try {
-    if (!SLACK_SUMMARY_WEBHOOK) return res.status(400).json({ error: 'summary-webhook-missing' });
+    const webhook = SLACK_SUMMARY_WEBHOOK || await getConfig('summary_webhook');
+    if (!webhook) return res.status(400).json({ error: 'summary-webhook-missing' });
     const { text = '' } = req.body || {};
     if (!text) return res.status(400).json({ error: 'text-required' });
-    const r = await fetch(SLACK_SUMMARY_WEBHOOK, {
+    const r = await fetch(webhook, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: String(text).slice(0, 3500) })
     });
