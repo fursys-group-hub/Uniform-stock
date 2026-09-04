@@ -292,6 +292,8 @@ function bindEvents() {
   els.reqsumSlack.addEventListener('click', sendReqsumSlack);
   els.reqsumCopy.addEventListener('click', copyReqsum);
   els.reqsumCsv.addEventListener('click', exportReqsumCsv);
+  els.reqsumBody.addEventListener('input', onReqsumEdit);
+  els.reqsumBody.addEventListener('click', onReqsumBodyClick);
   els.seedBtn.addEventListener('click', resetSeedData);
   els.backupBtn.addEventListener('click', downloadBackup);
   els.restoreInput.addEventListener('change', restoreBackup);
@@ -1702,7 +1704,12 @@ function renderBillingPivot(rows) {
 }
 
 // ===== 요청 합계 (창고 준비 수량) =====
-let reqsumRows = [];
+let reqsumRows = [];       // 서버에서 불러온 원본 요청(요청 건수 표시용)
+let reqsumItems = [];      // 편집 가능한 합계 목록: [{name,size,qty,manual}]
+
+function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function reqsumActive() { return reqsumItems.filter(x => (Number(x.qty) || 0) > 0); }
+function sortReqsumItems() { reqsumItems.sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko') || sizeNum(a.size) - sizeNum(b.size)); }
 
 function fmtDate(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 function setReqsumWeek(weekOffset) {
@@ -1730,9 +1737,10 @@ async function loadRequests() {
   els.reqsumBody.innerHTML = '<div class="muted" style="padding:8px 2px;">불러오는 중…</div>';
   try {
     reqsumRows = await api(`/api/requests?from=${from}&to=${to}`);
+    reqsumItems = aggregateRequests();   // 요청을 합산해 편집 가능한 목록으로
     renderReqsum();
   } catch (e) {
-    reqsumRows = [];
+    reqsumRows = []; reqsumItems = [];
     els.reqsumBody.innerHTML = `<div class="muted" style="padding:8px 2px;">불러오기 실패: ${e.message}</div>`;
   }
 }
@@ -1741,7 +1749,7 @@ function aggregateRequests() {
   reqsumRows.forEach(r => (r.lines || []).forEach(l => {
     const name = l.name || '', size = l.size || '';
     const k = name + '|' + size;
-    const cur = map.get(k) || { name, size, qty: 0 };
+    const cur = map.get(k) || { name, size, qty: 0, manual: false };
     cur.qty += Number(l.qty) || 0;
     map.set(k, cur);
   }));
@@ -1749,42 +1757,72 @@ function aggregateRequests() {
     .sort((a, b) => a.name.localeCompare(b.name, 'ko') || sizeNum(a.size) - sizeNum(b.size));
 }
 function renderReqsum() {
-  const agg = aggregateRequests();
-  const total = agg.reduce((a, x) => a + x.qty, 0);
-  if (!agg.length) {
-    els.reqsumBody.innerHTML = '<div class="muted" style="padding:8px 2px;">해당 기간 요청이 없습니다. (요청 저장은 이 기능 배포 이후부터 쌓입니다)</div>';
-    return;
-  }
-  let curName = '';
-  const bodyRows = agg.map(x => {
-    const head = x.name !== curName; curName = x.name;
-    return `<tr>
-      <td>${head ? x.name : ''}</td>
-      <td>${x.size}</td>
-      <td class="num"><strong>${x.qty.toLocaleString()}</strong></td>
-    </tr>`;
-  }).join('');
+  const items = reqsumItems;
+  const total = items.reduce((a, x) => a + (Number(x.qty) || 0), 0);
+  const bodyRows = items.map((x, i) => `<tr>
+      <td>${escHtml(x.name)}${x.manual ? ' <span class="muted" style="font-size:11px;">(수동)</span>' : ''}</td>
+      <td>${escHtml(x.size)}</td>
+      <td class="num"><input type="number" class="reqsum-qty" data-idx="${i}" value="${Number(x.qty) || 0}" min="0" style="width:84px;text-align:right;"></td>
+      <td><button type="button" class="mini-btn reqsum-del" data-idx="${i}">삭제</button></td>
+    </tr>`).join('');
+  const emptyNote = items.length ? '' : '<div class="muted" style="padding:6px 2px;">이 기간에 저장된 요청이 없습니다. 아래에서 <b>품목·사이즈·수량을 직접 추가</b>해 슬랙으로 보내실 수 있어요.</div>';
   els.reqsumBody.innerHTML = `
     <div class="cards-grid" style="margin-bottom:12px;">
       <div class="summary-card"><span>요청 건수</span><strong>${reqsumRows.length}건</strong></div>
-      <div class="summary-card"><span>품목·사이즈 종류</span><strong>${agg.length}종</strong></div>
-      <div class="summary-card"><span>총 준비 수량</span><strong>${total.toLocaleString()}개</strong></div>
+      <div class="summary-card"><span>품목·사이즈 종류</span><strong id="reqsumKinds">${items.length}종</strong></div>
+      <div class="summary-card"><span>총 준비 수량</span><strong id="reqsumSum">${total.toLocaleString()}개</strong></div>
     </div>
+    ${emptyNote}
     <div class="table-wrap"><table>
-      <thead><tr><th>품목</th><th>사이즈</th><th class="num">준비 수량</th></tr></thead>
-      <tbody>${bodyRows}<tr class="pivot-total"><td>합계</td><td></td><td class="num"><strong>${total.toLocaleString()}</strong></td></tr></tbody>
-    </table></div>`;
+      <thead><tr><th>품목</th><th>사이즈</th><th class="num">준비 수량 (수정 가능)</th><th></th></tr></thead>
+      <tbody>${bodyRows}<tr class="pivot-total"><td>합계</td><td></td><td class="num"><strong id="reqsumTotalCell">${total.toLocaleString()}</strong></td><td></td></tr></tbody>
+    </table></div>
+    <div class="reqsum-add" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+      <span class="muted" style="font-size:13px;font-weight:600;">수동 추가:</span>
+      <input type="text" id="reqsumAddName" placeholder="품목 (예: 조끼)" style="width:150px;" />
+      <input type="text" id="reqsumAddSize" placeholder="사이즈 (예: 105)" style="width:110px;" />
+      <input type="number" id="reqsumAddQty" placeholder="수량" min="1" style="width:90px;" />
+      <button type="button" id="reqsumAddBtn" class="mini-btn">＋ 행 추가</button>
+    </div>`;
+}
+function updateReqsumTotals() {
+  const total = reqsumItems.reduce((a, x) => a + (Number(x.qty) || 0), 0);
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('reqsumSum', total.toLocaleString() + '개');
+  set('reqsumTotalCell', total.toLocaleString());
+  set('reqsumKinds', reqsumItems.length + '종');
+}
+function onReqsumEdit(e) {
+  const inp = e.target.closest('.reqsum-qty'); if (!inp) return;
+  const i = Number(inp.dataset.idx);
+  if (reqsumItems[i]) { reqsumItems[i].qty = Math.max(0, Number(inp.value) || 0); updateReqsumTotals(); }
+}
+function onReqsumBodyClick(e) {
+  const del = e.target.closest('.reqsum-del');
+  if (del) { reqsumItems.splice(Number(del.dataset.idx), 1); renderReqsum(); return; }
+  if (e.target.closest('#reqsumAddBtn')) addReqsumRow();
+}
+function addReqsumRow() {
+  const name = (document.getElementById('reqsumAddName').value || '').trim();
+  const size = (document.getElementById('reqsumAddSize').value || '').trim();
+  const qty = Number(document.getElementById('reqsumAddQty').value) || 0;
+  if (!name || !size || qty <= 0) { alert('품목·사이즈·수량(1 이상)을 모두 입력하세요.'); return; }
+  const found = reqsumItems.find(x => x.name === name && x.size === size);
+  if (found) found.qty = (Number(found.qty) || 0) + qty;
+  else reqsumItems.push({ name, size, qty, manual: true });
+  sortReqsumItems();
+  renderReqsum();
 }
 function buildReqsumText() {
-  const agg = aggregateRequests();
-  const total = agg.reduce((a, x) => a + x.qty, 0);
-  const lines = ['[준비 필요 수량]', `기간: ${els.reqsumFrom.value} ~ ${els.reqsumTo.value}`, `요청 ${reqsumRows.length}건 · 총 ${total.toLocaleString()}개`, '─────────────────────────────'];
+  const list = reqsumActive().slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko') || sizeNum(a.size) - sizeNum(b.size));
+  const total = list.reduce((a, x) => a + Number(x.qty), 0);
+  const lines = ['[준비 필요 수량]', `기간: ${els.reqsumFrom.value} ~ ${els.reqsumTo.value}`, `총 ${total.toLocaleString()}개 · ${list.length}종`, '─────────────────────────────'];
   let curName = '';
-  agg.forEach(x => { if (x.name !== curName) { lines.push(`▪ ${x.name}`); curName = x.name; } lines.push(`   ${x.size} - ${x.qty}개`); });
+  list.forEach(x => { if (x.name !== curName) { lines.push(`▪ ${x.name}`); curName = x.name; } lines.push(`   ${x.size} - ${Number(x.qty)}개`); });
   return lines.join('\n');
 }
 async function sendReqsumSlack() {
-  if (!aggregateRequests().length) { alert('보낼 합계가 없습니다.'); return; }
+  if (!reqsumActive().length) { alert('보낼 합계가 없습니다.'); return; }
   const text = buildReqsumText();
   try {
     await api('/api/requests/notify', { method: 'POST', body: { text } });
@@ -1797,17 +1835,17 @@ async function sendReqsumSlack() {
   }
 }
 function copyReqsum(silent) {
-  if (!aggregateRequests().length) { if (!silent) alert('복사할 합계가 없습니다.'); return; }
+  if (!reqsumActive().length) { if (!silent) alert('복사할 합계가 없습니다.'); return; }
   const text = buildReqsumText();
   if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
   if (!silent) alert('합계를 복사했습니다. 슬랙에 붙여넣으세요.');
 }
 function exportReqsumCsv() {
-  const agg = aggregateRequests();
-  if (!agg.length) { alert('내보낼 합계가 없습니다.'); return; }
+  const list = reqsumActive();
+  if (!list.length) { alert('내보낼 합계가 없습니다.'); return; }
   const esc = v => `"${String(v).replace(/"/g, '""')}"`;
   const lines = [['품목', '사이즈', '준비수량'].map(esc).join(',')];
-  agg.forEach(x => lines.push([x.name, x.size, x.qty].map(esc).join(',')));
+  list.forEach(x => lines.push([x.name, x.size, Number(x.qty)].map(esc).join(',')));
   const csv = '﻿' + lines.join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
