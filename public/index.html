@@ -131,7 +131,10 @@
           </div>
           <p class="plan-desc">선택 기간의 <b>모든 권역·요청자 요청을 품목·사이즈별로 합산</b>합니다. (개별 주문 슬랙 메시지는 그대로 유지) <span class="muted" style="font-size:12px;">※ 합산 대상은 이 기능 배포 이후 접수된 요청부터입니다.</span></p>
           <div id="reqsumBody"></div>
-          <div class="form-actions" style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+          <div class="form-actions" style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <button type="button" id="reqsumSave" class="primary-btn">💾 저장</button>
+            <button type="button" id="reqsumReagg" class="ghost-btn dark-ghost">🔄 요청에서 다시 합산</button>
+            <span style="flex:1"></span>
             <button type="button" id="reqsumSlack" class="primary-btn">📨 슬랙에 합계 보내기</button>
             <button type="button" id="reqsumCopy" class="ghost-btn dark-ghost">📋 합계 복사</button>
             <button type="button" id="reqsumCsv" class="export-btn">⬇ 엑셀</button>
@@ -526,6 +529,6 @@
     </article>
   </template>
 
-  <script src="./app.js?v=43"></script>
+  <script src="./app.js?v=44"></script>
 </body>
 </html>

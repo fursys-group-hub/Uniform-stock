@@ -169,6 +169,30 @@ app.get('/api/requests', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// 관리자: 기간별 준비수량(합계) 저장/불러오기 — app_config 에 JSON 보관
+app.get('/api/requests/summary', requireAuth, async (req, res) => {
+  try {
+    const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
+    const v = await getConfig(`reqsum:${from}:${to}`);
+    let items = null; try { items = v ? JSON.parse(v) : null; } catch { items = null; }
+    res.json({ items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/requests/summary', requireAuth, async (req, res) => {
+  try {
+    const { from = '', to = '', items = [] } = req.body || {};
+    if (!from || !to) return res.status(400).json({ error: 'range-required' });
+    const safe = Array.isArray(items) ? items.slice(0, 500).map(x => ({
+      name: String(x.name || '').slice(0, 80), size: String(x.size || '').slice(0, 20), qty: Number(x.qty) || 0
+    })) : [];
+    await pool.query(
+      'insert into app_config (key,value,updated_at) values ($1,$2,now()) on conflict (key) do update set value=excluded.value, updated_at=now()',
+      [`reqsum:${String(from).slice(0, 10)}:${String(to).slice(0, 10)}`, JSON.stringify(safe)]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // 관리자: 합계 요약을 슬랙(요약용 Incoming Webhook)에 게시
 app.post('/api/requests/notify', requireAuth, async (req, res) => {
   try {

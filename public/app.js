@@ -238,7 +238,9 @@ const els = {
   reqsumBody: document.getElementById('reqsumBody'),
   reqsumSlack: document.getElementById('reqsumSlack'),
   reqsumCopy: document.getElementById('reqsumCopy'),
-  reqsumCsv: document.getElementById('reqsumCsv')
+  reqsumCsv: document.getElementById('reqsumCsv'),
+  reqsumSave: document.getElementById('reqsumSave'),
+  reqsumReagg: document.getElementById('reqsumReagg')
 };
 
 function init() {
@@ -294,6 +296,8 @@ function bindEvents() {
   els.reqsumCsv.addEventListener('click', exportReqsumCsv);
   els.reqsumBody.addEventListener('input', onReqsumEdit);
   els.reqsumBody.addEventListener('click', onReqsumBodyClick);
+  els.reqsumSave.addEventListener('click', saveReqsum);
+  els.reqsumReagg.addEventListener('click', reaggregateReqsum);
   els.seedBtn.addEventListener('click', resetSeedData);
   els.backupBtn.addEventListener('click', downloadBackup);
   els.restoreInput.addEventListener('change', restoreBackup);
@@ -1706,6 +1710,7 @@ function renderBillingPivot(rows) {
 // ===== 요청 합계 (창고 준비 수량) =====
 let reqsumRows = [];       // 서버에서 불러온 원본 요청(요청 건수 표시용)
 let reqsumItems = [];      // 편집 가능한 합계 목록: [{name,size,qty,manual}]
+let reqsumSavedLoaded = false; // 이번 조회가 '저장본'에서 불러온 것인지
 
 function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function reqsumActive() { return reqsumItems.filter(x => (Number(x.qty) || 0) > 0); }
@@ -1737,7 +1742,15 @@ async function loadRequests() {
   els.reqsumBody.innerHTML = '<div class="muted" style="padding:8px 2px;">불러오는 중…</div>';
   try {
     reqsumRows = await api(`/api/requests?from=${from}&to=${to}`);
-    reqsumItems = aggregateRequests();   // 요청을 합산해 편집 가능한 목록으로
+    let saved = null;
+    try { saved = (await api(`/api/requests/summary?from=${from}&to=${to}`)).items; } catch { saved = null; }
+    if (saved && saved.length) {
+      reqsumItems = saved.map(x => ({ name: x.name || '', size: x.size || '', qty: Number(x.qty) || 0 }));
+      reqsumSavedLoaded = true;
+    } else {
+      reqsumItems = aggregateRequests();   // 요청을 합산해 편집 가능한 목록으로
+      reqsumSavedLoaded = false;
+    }
     renderReqsum();
   } catch (e) {
     reqsumRows = []; reqsumItems = [];
@@ -1766,7 +1779,9 @@ function renderReqsum() {
       <td><button type="button" class="mini-btn reqsum-del" data-idx="${i}">삭제</button></td>
     </tr>`).join('');
   const emptyNote = items.length ? '' : '<div class="muted" style="padding:6px 2px;">이 기간에 저장된 요청이 없습니다. 아래에서 <b>품목·사이즈·수량을 직접 추가</b>해 슬랙으로 보내실 수 있어요.</div>';
+  const savedBadge = reqsumSavedLoaded ? '<div class="muted" style="font-size:12px;margin-bottom:8px;">💾 저장해 둔 값을 불러왔습니다. (수정 후 다시 <b>저장</b>하거나, <b>요청에서 다시 합산</b> 가능)</div>' : '';
   els.reqsumBody.innerHTML = `
+    ${savedBadge}
     <div class="cards-grid" style="margin-bottom:12px;">
       <div class="summary-card"><span>요청 건수</span><strong>${reqsumRows.length}건</strong></div>
       <div class="summary-card"><span>품목·사이즈 종류</span><strong id="reqsumKinds">${items.length}종</strong></div>
@@ -1811,6 +1826,22 @@ function addReqsumRow() {
   if (found) found.qty = (Number(found.qty) || 0) + qty;
   else reqsumItems.push({ name, size, qty, manual: true });
   sortReqsumItems();
+  renderReqsum();
+}
+async function saveReqsum() {
+  const from = els.reqsumFrom.value, to = els.reqsumTo.value;
+  if (!from || !to) { alert('기간을 먼저 선택하세요.'); return; }
+  try {
+    await api('/api/requests/summary', { method: 'POST', body: { from, to, items: reqsumActive() } });
+    reqsumSavedLoaded = true;
+    renderReqsum();
+    alert('저장했습니다. 다음에 이 기간을 조회하면 저장한 값이 그대로 나옵니다.');
+  } catch (e) { alert('저장 실패: ' + e.message); }
+}
+function reaggregateReqsum() {
+  if (!confirm('수정/저장한 값을 버리고, 요청 원본에서 다시 합산할까요?')) return;
+  reqsumItems = aggregateRequests();
+  reqsumSavedLoaded = false;
   renderReqsum();
 }
 function buildReqsumText() {
