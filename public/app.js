@@ -1675,12 +1675,29 @@ function exportBillingCsv() {
   if (!billingRows.length) { alert('추출할 청구 내역이 없습니다. (필터를 확인하세요)'); return; }
   const esc = v => `"${String(v).replace(/"/g, '""')}"`;
   const header = ['날짜', '수령 담당자', '품목', '사이즈', '수량', '단가', '청구금액'];
-  const rows = billingRows.slice()
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.receiver || '').localeCompare(String(b.receiver || ''), 'ko'))
-    .map(tx => {
-      const item = getItemById(tx.itemId);
-      return [tx.date || '', tx.receiver || '', item?.name || '', item?.size || '', Number(tx.quantity) || 0, Number(tx.unitPrice) || 0, Number(tx.amount) || 0];
-    });
+  // (수령 담당자 + 품목 + 사이즈) 동일 건은 하나의 행으로 합산
+  const map = new Map();
+  billingRows.forEach(tx => {
+    const item = getItemById(tx.itemId);
+    const receiver = tx.receiver || '';
+    const name = item?.name || '';
+    const size = item?.size || '';
+    const key = `${receiver}||${name}||${size}`;
+    let g = map.get(key);
+    if (!g) { g = { receiver, name, size, qty: 0, amount: 0, unit: Number(tx.unitPrice) || 0, dates: new Set() }; map.set(key, g); }
+    g.qty += Number(tx.quantity) || 0;
+    g.amount += Number(tx.amount) || 0;
+    if (Number(tx.unitPrice)) g.unit = Number(tx.unitPrice); // 단가는 최신값 유지
+    if (tx.date) g.dates.add(String(tx.date));
+  });
+  const dateLabel = set => {
+    const ds = [...set].sort();
+    if (!ds.length) return '';
+    return ds.length === 1 ? ds[0] : `${ds[0]} ~ ${ds[ds.length - 1]}`;
+  };
+  const rows = [...map.values()]
+    .sort((a, b) => dateLabel(a.dates).localeCompare(dateLabel(b.dates)) || a.receiver.localeCompare(b.receiver, 'ko') || a.name.localeCompare(b.name, 'ko') || a.size.localeCompare(b.size, 'ko'))
+    .map(g => [dateLabel(g.dates), g.receiver, g.name, g.size, g.qty, g.unit, g.amount]);
   const csv = '﻿' + [header, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
