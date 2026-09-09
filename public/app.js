@@ -92,6 +92,7 @@ const dashFilter = { category: '전체', item: '전체', sort: 'default', status
 const pricingFilter = { category: '전체' };
 // 청구 조회 탭 필터 상태 (월 / 권역)
 const billingFilter = { month: 'all', region: 'all' };
+let billingRows = []; // 현재 필터가 반영된 청구 행(엑셀 추출용)
 // 시공팀 대시보드 표시가격 대조용 (POST /api/prices 로 불러온 실제 노출값)
 let teamPriceMap = null;
 
@@ -197,6 +198,7 @@ const els = {
   billingMonth: document.getElementById('billingMonth'),
   billingRegion: document.getElementById('billingRegion'),
   billingSummaryCards: document.getElementById('billingSummaryCards'),
+  billingExport: document.getElementById('billingExport'),
   billingPivot: document.getElementById('billingPivot'),
   billingTableBody: document.getElementById('billingTableBody'),
   seedBtn: document.getElementById('seedBtn'),
@@ -289,6 +291,7 @@ function bindEvents() {
   els.billingSearch.addEventListener('input', renderBilling);
   els.billingMonth.addEventListener('change', () => { billingFilter.month = els.billingMonth.value; renderBilling(); });
   els.billingRegion.addEventListener('change', () => { billingFilter.region = els.billingRegion.value; renderBilling(); });
+  if (els.billingExport) els.billingExport.addEventListener('click', exportBillingCsv);
   els.reqsumLoad.addEventListener('click', loadRequests);
   els.reqsumPreset.addEventListener('click', onReqsumPreset);
   els.reqsumSlack.addEventListener('click', sendReqsumSlack);
@@ -1643,6 +1646,7 @@ function renderBilling() {
     (billingFilter.month === 'all' || (tx.date || '').slice(0, 7) === billingFilter.month) &&
     (billingFilter.region === 'all' || (tx.receiver || '미지정') === billingFilter.region)
   );
+  billingRows = rows; // 현재 필터 반영된 행(엑셀 추출용)
   const grouped = groupBy(rows, tx => tx.receiver || '미지정');
   els.billingSummaryCards.innerHTML = Object.entries(grouped).map(([receiver, list]) => `
     <div class="summary-card"><span>${receiver}</span><strong>${formatCurrency(list.reduce((acc, tx) => acc + (tx.amount || 0), 0))}</strong></div>
@@ -1664,6 +1668,27 @@ function renderBilling() {
       </tr>
     `;
   }).join('') || `<tr><td colspan="7" class="empty-state">청구할 분출 내역이 없습니다.</td></tr>`;
+}
+
+// 청구 조회 엑셀 내보내기 — 현재 필터(월/담당자) 그대로. 열: 날짜·수령담당자·품목·사이즈·수량·단가·청구금액
+function exportBillingCsv() {
+  if (!billingRows.length) { alert('추출할 청구 내역이 없습니다. (필터를 확인하세요)'); return; }
+  const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+  const header = ['날짜', '수령 담당자', '품목', '사이즈', '수량', '단가', '청구금액'];
+  const rows = billingRows.slice()
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.receiver || '').localeCompare(String(b.receiver || ''), 'ko'))
+    .map(tx => {
+      const item = getItemById(tx.itemId);
+      return [tx.date || '', tx.receiver || '', item?.name || '', item?.size || '', Number(tx.quantity) || 0, Number(tx.unitPrice) || 0, Number(tx.amount) || 0];
+    });
+  const csv = '﻿' + [header, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const m = billingFilter.month === 'all' ? '전체월' : billingFilter.month;
+  const r = billingFilter.region === 'all' ? '전체담당자' : billingFilter.region;
+  const a = document.createElement('a');
+  a.href = url; a.download = `청구내역_${m}_${r}.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
 // 권역(수령 담당자) × 월별 청구액 교차표
