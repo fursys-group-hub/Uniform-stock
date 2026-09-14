@@ -1175,7 +1175,7 @@ function syncTransactionAmount() {
 // 비고 양식 — 종류 선택 시 자동으로 채워지는 템플릿
 const NOTE_TEMPLATES = {
   '재고실사 오류': '[재고실사 오류]\n•품목: \n•SIZE: \n•개수: ',
-  '시공팀 요청': '[시공팀 요청]\n•품목: \n•SIZE: \n•개수: ',
+  '시공팀 요청': '[시공팀 요청]\n•요청일시: \n•요청자: \n•전달방식: ',
   '기타': '[기타]\n'
 };
 
@@ -1191,9 +1191,8 @@ function onNotePreset(event) {
   ta.value = tpl;
   [...event.currentTarget.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b === btn));
   ta.focus();
-  const anchor = '•품목: ';
-  const at = tpl.indexOf(anchor);
-  const pos = at >= 0 ? at + anchor.length : tpl.length;
+  const m = tpl.match(/•[^:\n]*:\s/); // 첫 번째 항목의 ": " 뒤로 커서 이동
+  const pos = m ? m.index + m[0].length : tpl.length;
   ta.setSelectionRange(pos, pos);
 }
 
