@@ -1341,12 +1341,12 @@ function renderHistory() {
         <td>${item?.name || '-'}</td>
         <td>${item?.size || '-'}</td>
         <td>${formatNumber(tx.quantity)}</td>
-        <td>${tx.issuer || '-'}</td>
+        <td>${mask(tx.issuer || '-')}</td>
         <td>${mask(tx.receiver || '-')}</td>
         <td>${mask(formatCurrency(tx.unitPrice || 0))}</td>
         <td>${mask(formatCurrency(tx.amount || 0))}</td>
         <td>${tx.note || '-'}</td>
-        <td class="row-actions">${appLocked ? '' : `
+        <td class="row-actions">${appLocked ? '🔒' : `
           <button class="mini-btn edit" data-edit-tx="${tx.id}">수정</button>
           <button class="mini-btn delete" data-del-tx="${tx.id}">삭제</button>`}
         </td>

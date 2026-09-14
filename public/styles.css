@@ -996,16 +996,5 @@ body.locked .edit-lock-note {
 /* 편집 모드 시각 표시 — 본문 상단 얇은 띠 */
 body:not(.locked) .content > .page-header { box-shadow: inset 0 3px 0 #1f7a45; }
 
-/* 잠금 시 수불이력의 민감/편집 컬럼은 자물쇠로 도배하지 말고 통째로 숨긴다
-   (열 순서: 7 수령담당자 · 8 단가 · 9 청구금액 · 11 작업) → 날짜·구분·품목·사이즈·수량·비고만 깔끔히 노출 */
-body.locked [data-panel="history"] thead th:nth-child(7),
-body.locked [data-panel="history"] thead th:nth-child(8),
-body.locked [data-panel="history"] thead th:nth-child(9),
-body.locked [data-panel="history"] thead th:nth-child(11),
-body.locked [data-panel="history"] #historyTableBody td:nth-child(7),
-body.locked [data-panel="history"] #historyTableBody td:nth-child(8),
-body.locked [data-panel="history"] #historyTableBody td:nth-child(9),
-body.locked [data-panel="history"] #historyTableBody td:nth-child(11) { display: none; }
-
 /* 비고 양식 종류 선택 버튼 */
 .note-preset { margin: 4px 0 8px; }

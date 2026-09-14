@@ -106,7 +106,7 @@ function optionalAuth(req, res, next) {
   next();
 }
 // 잠금(비인증) 상태에서 민감 필드를 가린다: 단가·청구금액·수령 담당자.
-const maskTx = (t) => ({ ...t, receiver: '', unitPrice: 0, amount: 0 });
+const maskTx = (t) => ({ ...t, issuer: '', receiver: '', unitPrice: 0, amount: 0 });
 const maskItem = (i) => ({ ...i, unitPrice: 0 });
 
 app.post('/api/login', (req, res) => {
