@@ -268,9 +268,16 @@ app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
 app.post('/api/items/:id', requireAuth, async (req, res) => {
   const b = req.body || {};
   try {
+    // UPSERT: DB에 없던 품목(표준 사이즈 그리드 등)이면 새로 만들고, 있으면 단가·안전재고만 갱신.
+    // (기존 UPDATE 전용은 DB에 없는 사이즈의 단가 저장이 0건 처리되어 소실되던 문제 해결)
     await pool.query(
-      `update items set unit_price=coalesce($2,unit_price), safety_stock=coalesce($3,safety_stock), updated_at=now() where id=$1`,
-      [req.params.id, (b.unitPrice ?? null), (b.safetyStock ?? null)]
+      `insert into items (id, category, name, size, unit_price, initial_stock, safety_stock)
+       values ($1,$2,$3,$4,$5,$6,$7)
+       on conflict (id) do update set
+         unit_price = coalesce($5, items.unit_price),
+         safety_stock = coalesce($7, items.safety_stock),
+         updated_at = now()`,
+      [req.params.id, b.category || '', b.name || '', b.size || '', (b.unitPrice ?? 0), (b.initialStock ?? 0), (b.safetyStock ?? 0)]
     );
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }

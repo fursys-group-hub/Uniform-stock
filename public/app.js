@@ -141,9 +141,10 @@ function ensureStandardSizes() {
     names.forEach(name => sizes.forEach(size => {
       const key = `${cat}|${name}|${size}`;
       if (!have.has(key)) {
+        // 화면 그리드용 자리표시(품절)만 로컬로 보강. DB 저장은 관리자가 단가를 넣을 때만
+        // (자동 저장하면 모든 표준 사이즈가 ₩0으로 대량 삽입되므로 enqueue하지 않는다)
         const item = { id: gridId(key), category: cat, name, size, initialStock: 0, unitPrice: 0, safetyStock: 0 };
         state.items.push(item);
-        enqueue({ type: 'upsertItem', row: item });
         have.add(key);
         added++;
       }
