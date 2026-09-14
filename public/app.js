@@ -249,6 +249,7 @@ function init() {
   ensureStandardSizes();        // 표준 사이즈를 실제 품목(재고 0=품절)으로 보강
   populateItemSelects();
   setDefaultDates();
+  applyLockUI();                  // 첫 페인트부터 잠금 클래스 일관 적용(초기 깜빡임 방지)
   renderAll();
   updateSyncBadge(loadOutbox().length);
   window.addEventListener('online', flushOutbox);
