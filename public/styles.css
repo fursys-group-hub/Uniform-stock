@@ -962,3 +962,36 @@ tr.phantom td:first-child { color: #64748b; }
 /* 사이즈 × 월 수요 히트맵 */
 .heat-table td.heat-cell { text-align: center; font-size: 12px; font-weight: 600; }
 .heat-table th, .heat-table td:first-child { white-space: nowrap; }
+
+/* ===================== 열람/편집 잠금 (권한) ===================== */
+/* 잠금 상태 배지 */
+.lock-status { font-size: 12px; font-weight: 700; padding: 6px 10px; border-radius: 8px; text-align: center; }
+.lock-status.locked   { background: #fff4e5; color: #b45309; border: 1px solid #fcd9a5; }
+.lock-status.unlocked { background: #e7f7ee; color: #1f7a45; border: 1px solid #b3e6c6; }
+.lock-toggle { font-weight: 700; }
+
+/* 잠금 시 편집 UI 숨김 (실제 보안은 서버가 담당, 화면은 보조) */
+body.locked #transactionForm,
+body.locked #auditForm,
+body.locked #reqsumSave,
+body.locked #reqsumReagg,
+body.locked #reqsumSlack,
+body.locked #seedBtn,
+body.locked #backupBtn,
+body.locked .file-label,
+body.locked #verifyTeamPriceBtn { display: none !important; }
+
+/* 편집 모드에서만 보이는 안내 문구 */
+.edit-lock-note { display: none; }
+body.locked .edit-lock-note {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 14px 16px; margin: 4px 0 2px;
+  background: #fff4e5; color: #92400e; border: 1px dashed #fcd9a5; border-radius: 10px;
+  font-size: 13px; font-weight: 600;
+}
+
+/* 잠긴 탭 본문 안내 행 */
+.lock-empty { color: #b45309 !important; font-weight: 600; }
+
+/* 편집 모드 시각 표시 — 본문 상단 얇은 띠 */
+body:not(.locked) .content > .page-header { box-shadow: inset 0 3px 0 #1f7a45; }

@@ -97,6 +97,18 @@ function requireAuth(req, res, next) {
   catch { res.status(401).json({ error: 'unauthorized' }); }
 }
 
+// 선택적 인증: 유효한 토큰이면 req.user 세팅, 없거나 틀려도 통과(401 아님).
+// 로그인 없이 열람은 허용하되, 토큰이 있으면 민감정보(단가·금액·담당자)까지 응답하기 위한 게이트.
+function optionalAuth(req, res, next) {
+  const h = req.headers.authorization || '';
+  const tok = h.startsWith('Bearer ') ? h.slice(7) : '';
+  try { req.user = jwt.verify(tok, JWT_SECRET); } catch { req.user = null; }
+  next();
+}
+// 잠금(비인증) 상태에서 민감 필드를 가린다: 단가·청구금액·수령 담당자.
+const maskTx = (t) => ({ ...t, receiver: '', unitPrice: 0, amount: 0 });
+const maskItem = (i) => ({ ...i, unitPrice: 0 });
+
 app.post('/api/login', (req, res) => {
   const { password } = req.body || {};
   if (!ADMIN_PASSWORD) return res.status(500).json({ error: 'server-password-missing' });
@@ -153,7 +165,7 @@ app.post('/api/uniform-request', async (req, res) => {
 });
 
 // 관리자: 기간별 요청 조회(합계용). from/to = YYYY-MM-DD (요청일자 기준)
-app.get('/api/requests', requireAuth, async (req, res) => {
+app.get('/api/requests', optionalAuth, async (req, res) => {
   try {
     const from = String(req.query.from || '').slice(0, 10);
     const to = String(req.query.to || '').slice(0, 10);
@@ -170,7 +182,7 @@ app.get('/api/requests', requireAuth, async (req, res) => {
 });
 
 // 관리자: 기간별 준비수량(합계) 저장/불러오기 — app_config 에 JSON 보관
-app.get('/api/requests/summary', requireAuth, async (req, res) => {
+app.get('/api/requests/summary', optionalAuth, async (req, res) => {
   try {
     const from = String(req.query.from || '').slice(0, 10), to = String(req.query.to || '').slice(0, 10);
     const v = await getConfig(`reqsum:${from}:${to}`);
@@ -209,15 +221,19 @@ app.post('/api/requests/notify', requireAuth, async (req, res) => {
   } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
-// 관리자: 전체 데이터
-app.get('/api/bootstrap', requireAuth, async (req, res) => {
+// 전체 데이터 — 열람은 공개, 단 토큰(권한 비밀번호 해제) 있을 때만 단가·금액·담당자 포함.
+app.get('/api/bootstrap', optionalAuth, async (req, res) => {
   try {
     const [i, t, a] = await Promise.all([
       pool.query('select * from items order by category,name,size'),
       pool.query('select * from transactions order by created_at desc'),
       pool.query('select * from audits order by created_at desc')
     ]);
-    res.json({ items: i.rows.map(rowToItem), transactions: t.rows.map(rowToTx), audits: a.rows.map(rowToAudit) });
+    let items = i.rows.map(rowToItem);
+    let transactions = t.rows.map(rowToTx);
+    const audits = a.rows.map(rowToAudit);
+    if (!req.user) { items = items.map(maskItem); transactions = transactions.map(maskTx); }
+    res.json({ items, transactions, audits, locked: !req.user });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -280,7 +296,7 @@ app.post('/api/logs', requireAuth, async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-app.get('/api/logs', requireAuth, async (req, res) => {
+app.get('/api/logs', optionalAuth, async (req, res) => {
   try {
     const q = await pool.query('select at, actor, action, target from activity_logs order by at desc limit 300');
     res.json(q.rows.map((r) => ({ at: r.at, actor: r.actor || '', action: r.action || '', target: r.target || '' })));

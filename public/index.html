@@ -4,22 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LETUS 시공팀 유니폼 재고관리</title>
-  <link rel="stylesheet" href="./styles.css?v=26" />
+  <link rel="stylesheet" href="./styles.css?v=27" />
 </head>
 <body>
-  <div id="loginOverlay" class="login-overlay" hidden>
-    <form id="loginForm" class="login-card">
-      <h1>LETUS 시공팀 유니폼 재고관리</h1>
-      <p class="login-desc">본사 관리자 로그인 — 등록·수정은 관리자만 가능합니다.</p>
-      <label><span>관리자명</span><input type="text" name="operator" placeholder="예: 정유선" autocomplete="off" required /></label>
-      <label><span>비밀번호</span><input type="password" name="password" placeholder="비밀번호" required /></label>
-      <div id="loginError" class="login-error" hidden></div>
-      <button type="submit" class="primary-btn login-btn">로그인</button>
-      <div class="login-divider"><span>또는</span></div>
-      <a href="./request" class="dash-link">📊 유니폼 재고 현황 확인 (로그인 없이)</a>
-    </form>
-  </div>
-
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
@@ -52,9 +39,9 @@
 
       <div class="side-actions">
         <div id="syncBadge" class="sync-badge">● 연결 확인 중…</div>
-        <div id="operatorLabel" class="operator-label" hidden></div>
+        <div id="lockStatus" class="lock-status locked">🔒 열람 모드</div>
+        <button id="lockToggle" class="ghost-btn lock-toggle">🔓 편집 잠금 해제</button>
         <a href="./request" target="_blank" class="ghost-btn" style="text-decoration:none;">📊 시공팀 공개 대시보드 열기</a>
-        <button id="logoutBtn" class="ghost-btn" hidden>로그아웃</button>
         <button id="seedBtn" class="ghost-btn">초기 데이터 다시 넣기</button>
         <button id="backupBtn" class="ghost-btn">백업 다운로드</button>
         <label class="ghost-btn file-label">
@@ -146,6 +133,7 @@
         <div class="split-grid">
           <div class="panel">
             <div class="panel-head"><h3>수불 등록</h3></div>
+            <div class="edit-lock-note">🔒 수불 등록은 편집 잠금 해제 후 가능합니다. <button type="button" class="mini-btn primary" data-unlock>🔓 잠금 해제</button></div>
             <form id="transactionForm" class="form-grid">
               <label><span>날짜</span><input type="date" name="date" required /></label>
               <label><span>처리구분</span>
@@ -251,6 +239,7 @@
         <div class="split-grid">
           <div class="panel">
             <div class="panel-head"><h3>실사 등록</h3></div>
+            <div class="edit-lock-note">🔒 실사 등록은 편집 잠금 해제 후 가능합니다. <button type="button" class="mini-btn primary" data-unlock>🔓 잠금 해제</button></div>
             <form id="auditForm" class="form-grid">
               <label><span>실사일</span><input type="date" name="date" required /></label>
               <label><span>조사자</span><input type="text" name="inspector" required /></label>
@@ -530,6 +519,6 @@
     </article>
   </template>
 
-  <script src="./app.js?v=46"></script>
+  <script src="./app.js?v=47"></script>
 </body>
 </html>

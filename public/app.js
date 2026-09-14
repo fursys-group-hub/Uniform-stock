@@ -219,10 +219,8 @@ const els = {
   editItemSelect: document.getElementById('editItemSelect'),
   editCancel: document.getElementById('editCancel'),
   editModalClose: document.getElementById('editModalClose'),
-  loginOverlay: document.getElementById('loginOverlay'),
-  loginForm: document.getElementById('loginForm'),
-  loginError: document.getElementById('loginError'),
-  logoutBtn: document.getElementById('logoutBtn'),
+  lockToggle: document.getElementById('lockToggle'),
+  lockStatus: document.getElementById('lockStatus'),
   operatorLabel: document.getElementById('operatorLabel'),
   activityTableBody: document.getElementById('activityTableBody'),
   activityToggle: document.getElementById('activityToggle'),
@@ -260,6 +258,7 @@ function init() {
 
 function bindEvents() {
   els.navTabs.addEventListener('click', onTabClick);
+  document.addEventListener('click', (e) => { if (e.target.closest('[data-unlock]')) unlock(); });
   if (els.activityToggle) els.activityToggle.addEventListener('click', toggleActivityBody);
   if (els.activityPrev) els.activityPrev.addEventListener('click', () => changeActivityPage(-1));
   if (els.activityNext) els.activityNext.addEventListener('click', () => changeActivityPage(1));
@@ -345,6 +344,23 @@ let online = true;               // 서버 연결 가능 여부(표시용)
 function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
 
+// 권한 잠금 상태: 기본 잠금(열람만). 잠금 해제(=권한 비밀번호로 토큰 확보) 시에만
+// 단가·청구금액·담당자 표시 + 등록/수정/저장 가능. 서버 응답(locked)으로 최종 확정.
+let appLocked = !getToken();
+function isUnlocked() { return !appLocked; }
+// 잠금 시 민감값(단가·금액·담당자) 대신 자물쇠 표시
+function mask(formatted) { return appLocked ? '🔒' : formatted; }
+// 편집 동작 진입 가드 — 잠금 상태면 막고 안내
+function requireUnlock() {
+  if (appLocked) { alert('편집하려면 먼저 사이드바의 "🔓 편집 잠금 해제"를 눌러 권한 비밀번호를 입력하세요.'); return false; }
+  return true;
+}
+// 잠금된 탭 본문에 넣을 안내 행(잠금 해제 버튼 포함)
+function lockNoticeRow(cols, label) {
+  return `<tr><td colspan="${cols}" class="empty-state lock-empty">🔒 ${label}
+    <button type="button" class="mini-btn primary" data-unlock style="margin-left:8px;">🔓 잠금 해제</button></td></tr>`;
+}
+
 // 백엔드 API 호출 헬퍼
 async function api(path, { method = 'GET', body, auth = true } = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -381,7 +397,7 @@ async function flushOutbox() {
       try {
         await applyOp(op);
       } catch (e) {
-        if (e.code === 401) { online = true; break; }   // 인증 만료 → 재로그인 필요
+        if (e.code === 401) { online = true; onAuthExpired(); break; }   // 인증 만료 → 재잠금해제 필요
         online = false;
         console.warn('[sync] 반영 대기(재시도 예정):', op.type, e.message || e);
         break;                     // 실패 → 순서 보존 위해 중단, 다음 기회에 재시도
@@ -418,15 +434,16 @@ async function loadFromServer() {
       transactions: data.transactions || [],
       audits: data.audits || []
     };
+    appLocked = data.locked === true; // 서버가 마스킹했으면 잠금, 전체 데이터면 해제
     ensureStandardSizes();        // 서버 데이터에도 표준 사이즈 보강
     saveState();
     online = true;
+    applyLockUI();
     populateItemSelects();
     renderAll();
     updateSyncBadge(loadOutbox().length);
     flushOutbox();
   } catch (e) {
-    if (e.code === 401) { setToken(''); showLogin(); return; }
     online = false;
     console.error('[sync] 서버 로드 실패 — 로컬 데이터로 계속 진행합니다.', e);
     updateSyncBadge(loadOutbox().length);
@@ -460,7 +477,6 @@ async function renderActivity() {
     activityPage = 1;
     renderActivityPage();
   } catch (e) {
-    if (e.code === 401) { showLogin(); return; }
     activityRows = [];
     els.activityTableBody.innerHTML = `<tr><td colspan="4" class="empty-state">로그를 불러오지 못했습니다.</td></tr>`;
     if (els.activityPager) els.activityPager.hidden = true;
@@ -504,73 +520,78 @@ function toggleActivityBody() {
   els.activityToggle.textContent = collapsed ? '접기 ▾' : '펼치기 ▸';
 }
 
-/* ===================== 로그인 / 권한 (Phase 2) =====================
- * 관리자만 등록·수정·삭제 가능. 로그인 화면에선 관리자명 + 비밀번호만 입력한다.
- * 비밀번호는 백엔드가 검증하고, 쓰기 API는 로그인 토큰이 있어야만 동작한다(서버 강제).
+/* ===================== 열람 / 편집 권한 =====================
+ * 로그인 없이 누구나 열람(재고·분석 등). 단, 단가·청구금액·담당자 열람과
+ * 모든 등록·수정·저장은 "권한 비밀번호"로 잠금 해제해야 한다.
+ * 비밀번호는 백엔드가 검증하고(토큰 발급), 쓰기 API·민감정보 응답은 서버가 강제한다.
  */
 function getOperator() { return localStorage.getItem(OPERATOR_KEY) || ''; }
 
 function bindAuthEvents() {
-  if (els.loginForm) els.loginForm.addEventListener('submit', doLogin);
-  if (els.logoutBtn) els.logoutBtn.addEventListener('click', doLogout);
+  if (els.lockToggle) els.lockToggle.addEventListener('click', onLockToggle);
 }
 
+// 부팅: 로그인 창 없이 바로 데이터 로드(토큰 있으면 전체, 없으면 마스킹).
 async function initAuth() {
-  if (!getToken()) { showLogin(); return; }
-  hideLogin();                    // 저장된 로그인 있음(낙관적) → 데이터 로드 시도
-  await loadFromServer();         // 토큰이 만료됐으면 loadFromServer 내부에서 401 처리 → 로그인 화면
+  await loadFromServer();
 }
 
-function showLogin() {
-  if (els.loginOverlay) els.loginOverlay.hidden = false;
-  if (els.logoutBtn) els.logoutBtn.hidden = true;
-  if (els.operatorLabel) els.operatorLabel.hidden = true;
-}
-
-function hideLogin() {
-  if (els.loginOverlay) els.loginOverlay.hidden = true;
-  const op = getOperator();
-  if (els.logoutBtn) els.logoutBtn.hidden = !op;
-  if (els.operatorLabel) {
-    els.operatorLabel.hidden = !op;
-    els.operatorLabel.textContent = op ? `${op} 님` : '';
+// 잠금 상태에 맞춰 화면(본문 클래스·사이드바 표시)을 갱신하고 다시 그린다.
+function applyLockUI() {
+  document.body.classList.toggle('locked', appLocked);
+  if (els.lockToggle) els.lockToggle.textContent = appLocked ? '🔓 편집 잠금 해제' : '🔒 편집 잠그기';
+  if (els.lockStatus) {
+    const op = getOperator();
+    els.lockStatus.textContent = appLocked ? '🔒 열람 모드' : `🔓 편집 모드${op ? ` · ${op}` : ''}`;
+    els.lockStatus.className = `lock-status ${appLocked ? 'locked' : 'unlocked'}`;
   }
 }
 
-function onAuthed() {
-  hideLogin();
-  loadFromServer();               // 로그인 상태로 실제 데이터 로드
+function onLockToggle() {
+  if (appLocked) unlock();
+  else lock();
 }
 
-async function doLogin(event) {
-  event.preventDefault();
-  const name = (els.loginForm.operator.value || '').trim();
-  const pw = els.loginForm.password.value || '';
-  if (!name) { showLoginError('관리자명을 입력하세요.'); return; }
+// 잠금 해제: 권한 비밀번호 → 토큰 발급 → 전체 데이터 로드. 작업자명 없으면 1회 입력.
+async function unlock() {
+  const pw = prompt('권한 비밀번호를 입력하세요. (등록·수정·단가·청구금액 열람)');
+  if (pw === null) return;
   try {
     const data = await api('/api/login', { method: 'POST', body: { password: pw }, auth: false });
     setToken(data.token);
-    localStorage.setItem(OPERATOR_KEY, name);
-    els.loginForm.reset();
-    if (els.loginError) els.loginError.hidden = true;
-    logActivity('로그인', name);
-    onAuthed();
+    if (!getOperator()) {
+      const name = (prompt('작업자명을 입력하세요. (등록·수정 기록에 사용됩니다)') || '').trim();
+      if (name) localStorage.setItem(OPERATOR_KEY, name);
+    }
+    appLocked = false;
+    logActivity('편집 잠금 해제', getOperator());
+    await loadFromServer();        // 전체 데이터(단가 포함) 재로드
+    applyLockUI();
   } catch (e) {
-    if (e.code === 401) showLoginError('비밀번호가 올바르지 않습니다.');
-    else showLoginError('로그인 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+    alert(e.code === 401 ? '비밀번호가 올바르지 않습니다.' : '잠금 해제 중 오류가 발생했습니다. 잠시 후 다시 시도하세요.');
   }
 }
 
-async function doLogout() {
+// 편집 잠그기: 토큰 제거 → 마스킹 데이터로 재로드.
+async function lock() {
   setToken('');
-  localStorage.removeItem(OPERATOR_KEY);
-  location.reload();
+  appLocked = true;
+  await loadFromServer();
+  applyLockUI();
 }
 
-function showLoginError(msg) {
-  if (!els.loginError) return;
-  els.loginError.textContent = msg;
-  els.loginError.hidden = false;
+// 쓰기 중 토큰 만료(401) 감지 시 잠금으로 전환하고 1회 안내.
+let authExpiredNotified = false;
+function onAuthExpired() {
+  if (!getToken() && appLocked) return;
+  setToken('');
+  appLocked = true;
+  applyLockUI();
+  renderAll();
+  if (!authExpiredNotified) {
+    authExpiredNotified = true;
+    alert('권한이 만료되어 잠금 상태로 전환되었습니다. 저장하려면 다시 잠금 해제하세요. (입력하신 내용은 대기열에 보관됩니다)');
+  }
 }
 
 function setDefaultDates() {
@@ -1098,12 +1119,12 @@ function renderInventory() {
         <td>${row.size}</td>
         <td class="num"><span class="qty ${status}">${formatNumber(row.currentStock)}</span></td>
         <td>${statusBadge(status)}</td>
-        <td class="num">${formatCurrency(row.unitPrice || 0)}</td>
-        <td class="num">${formatCurrency(row.stockValue)}</td>
+        <td class="num">${mask(formatCurrency(row.unitPrice || 0))}</td>
+        <td class="num">${mask(formatCurrency(row.stockValue))}</td>
       </tr>`;
     }).join('');
 
-    html += `<tr class="subtotal-row"><td colspan="2">${cat} 소계</td><td class="num">${formatNumber(gStock)}</td><td></td><td></td><td class="num">${formatCurrency(gValue)}</td></tr>`;
+    html += `<tr class="subtotal-row"><td colspan="2">${cat} 소계</td><td class="num">${formatNumber(gStock)}</td><td></td><td></td><td class="num">${mask(formatCurrency(gValue))}</td></tr>`;
   });
 
   els.inventoryTableBody.innerHTML = html;
@@ -1151,6 +1172,7 @@ function syncTransactionAmount() {
 
 function submitTransaction(event) {
   event.preventDefault();
+  if (!requireUnlock()) return;
   const form = new FormData(els.transactionForm);
   const item = materializeItem(form.get('itemId')); // 미등록 사이즈면 실제 품목으로 자동 생성
   if (!item) { alert('품목을 찾을 수 없습니다.'); return; }
@@ -1286,13 +1308,13 @@ function renderHistory() {
         <td>${item?.size || '-'}</td>
         <td>${formatNumber(tx.quantity)}</td>
         <td>${tx.issuer || '-'}</td>
-        <td>${tx.receiver || '-'}</td>
-        <td>${formatCurrency(tx.unitPrice || 0)}</td>
-        <td>${formatCurrency(tx.amount || 0)}</td>
+        <td>${mask(tx.receiver || '-')}</td>
+        <td>${mask(formatCurrency(tx.unitPrice || 0))}</td>
+        <td>${mask(formatCurrency(tx.amount || 0))}</td>
         <td>${tx.note || '-'}</td>
-        <td class="row-actions">
+        <td class="row-actions">${appLocked ? '' : `
           <button class="mini-btn edit" data-edit-tx="${tx.id}">수정</button>
-          <button class="mini-btn delete" data-del-tx="${tx.id}">삭제</button>
+          <button class="mini-btn delete" data-del-tx="${tx.id}">삭제</button>`}
         </td>
       </tr>
     `;
@@ -1303,6 +1325,7 @@ function renderHistory() {
 function onHistoryAction(event) {
   const delBtn = event.target.closest('[data-del-tx]');
   const editBtn = event.target.closest('[data-edit-tx]');
+  if ((delBtn || editBtn) && !requireUnlock()) return;
 
   if (delBtn) {
     if (!confirm('이 수불 이력을 삭제할까요? 삭제하면 되돌릴 수 없습니다.')) return;
@@ -1346,6 +1369,7 @@ function closeEditModal() {
 // 수정 저장 (비밀번호 확인 후 최종 반영)
 function submitEdit(event) {
   event.preventDefault();
+  if (!requireUnlock()) return;
   const form = new FormData(els.editForm);
   const txId = form.get('id');
   const tx = state.transactions.find(t => t.id === txId);
@@ -1399,6 +1423,7 @@ async function previewAuditImage() {
 
 async function submitAudit(event) {
   event.preventDefault();
+  if (!requireUnlock()) return;
   const form = new FormData(els.auditForm);
   const item = materializeItem(form.get('itemId')); // 미등록 사이즈면 실제 품목으로 자동 생성
   if (!item) { alert('품목을 찾을 수 없습니다.'); return; }
@@ -1496,6 +1521,11 @@ function onPricingChipClick(event) {
 
 function renderPricing() {
   renderPricingChips();
+  if (appLocked) {
+    els.pricingTableBody.innerHTML = lockNoticeRow(3, '단가는 권한 비밀번호로 잠금 해제 후 확인·수정할 수 있습니다.');
+    if (els.pricingVerifyInfo) els.pricingVerifyInfo.hidden = true;
+    return;
+  }
   const items = getSortedItems().filter(i => pricingFilter.category === '전체' || i.category === pricingFilter.category);
   if (!items.length) {
     els.pricingTableBody.innerHTML = `<tr><td colspan="3" class="empty-state">품목이 없습니다.</td></tr>`;
@@ -1584,6 +1614,7 @@ function onPricingClick(event) {
 
 // 같은 품목의 모든 사이즈에 단가를 한 번에 적용 (기존 거래 청구액도 소급 반영)
 function applyBulkPrice(cat, name, price) {
+  if (!requireUnlock()) return;
   const targets = state.items.filter(i => i.category === cat && i.name === name);
   if (!targets.length) return;
   if (!confirm(`${cat} · ${name} 전체 ${targets.length}개 사이즈 단가를 ${formatCurrency(price)}(으)로 적용할까요?`)) return;
@@ -1607,6 +1638,7 @@ function applyBulkPrice(cat, name, price) {
 function savePriceInline(event) {
   const button = event.target.closest('[data-save-price]');
   if (!button) return;
+  if (!requireUnlock()) return;
   const itemId = button.dataset.savePrice;
   const input = els.pricingTableBody.querySelector(`[data-price-id="${itemId}"]`);
   const item = getItemById(itemId);
@@ -1630,6 +1662,13 @@ function savePriceInline(event) {
 }
 
 function renderBilling() {
+  if (appLocked) {
+    billingRows = [];
+    els.billingSummaryCards.innerHTML = '';
+    if (els.billingPivot) els.billingPivot.innerHTML = '';
+    els.billingTableBody.innerHTML = lockNoticeRow(7, '청구금액·단가·담당자는 권한 비밀번호로 잠금 해제 후 확인할 수 있습니다.');
+    return;
+  }
   const keyword = els.billingSearch.value.trim();
   const all = state.transactions.filter(tx => tx.type === '분출');
 
@@ -1871,6 +1910,7 @@ function addReqsumRow() {
   renderReqsum();
 }
 async function saveReqsum() {
+  if (!requireUnlock()) return;
   const from = els.reqsumFrom.value, to = els.reqsumTo.value;
   if (!from || !to) { alert('기간을 먼저 선택하세요.'); return; }
   try {
@@ -1895,6 +1935,7 @@ function buildReqsumText() {
   return lines.join('\n');
 }
 async function sendReqsumSlack() {
+  if (!requireUnlock()) return;
   if (!reqsumActive().length) { alert('보낼 합계가 없습니다.'); return; }
   const text = buildReqsumText();
   try {
@@ -1928,6 +1969,7 @@ function exportReqsumCsv() {
 }
 
 function resetSeedData() {
+  if (!requireUnlock()) return;
   if (!confirm('현재 입력된 데이터를 지우고 초기 재고 상태로 되돌릴까요?')) return;
   state = makeSeedState();
   enqueue({ type: 'replaceAll', state: structuredClone(state) });
@@ -1948,6 +1990,7 @@ function downloadBackup() {
 }
 
 function restoreBackup(event) {
+  if (!requireUnlock()) { event.target.value = ''; return; }
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
