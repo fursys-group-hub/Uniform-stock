@@ -275,6 +275,8 @@ function bindEvents() {
   els.transactionItemSearch.addEventListener('blur', () => { setTimeout(() => { els.transactionItemList.hidden = true; }, 150); });
   els.transactionItemSearch.addEventListener('keydown', onTxSearchKey);
   els.transactionItemList.addEventListener('mousedown', onTxListClick);
+  const notePreset = document.getElementById('notePreset');
+  if (notePreset) notePreset.addEventListener('click', onNotePreset);
   els.transactionForm.quantity.addEventListener('input', syncTransactionAmount);
   els.transactionForm.type.addEventListener('change', syncTransactionAmount);
   els.transactionForm.addEventListener('submit', submitTransaction);
@@ -1170,6 +1172,37 @@ function syncTransactionAmount() {
   els.transactionAmount.value = type === '분출' ? qty * unitPrice : 0;
 }
 
+// 비고 양식 — 종류 선택 시 자동으로 채워지는 템플릿
+const NOTE_TEMPLATES = {
+  '재고실사 오류': '[재고실사 오류]\n•품목: \n•SIZE: \n•개수: ',
+  '시공팀 요청': '[시공팀 요청]\n•품목: \n•SIZE: \n•개수: ',
+  '기타': '[기타]\n'
+};
+
+// 비고 종류 버튼 클릭 → 해당 양식을 비고란에 채운다(기존 입력이 있으면 확인).
+function onNotePreset(event) {
+  const btn = event.target.closest('[data-note]');
+  if (!btn) return;
+  const ta = els.transactionForm.note;
+  const tpl = NOTE_TEMPLATES[btn.dataset.note] || '';
+  const cur = (ta.value || '').trim();
+  const isKnown = cur === '' || Object.values(NOTE_TEMPLATES).some(t => cur === t.trim());
+  if (cur && !isKnown && !confirm('비고에 입력한 내용을 선택한 양식으로 바꿀까요?')) return;
+  ta.value = tpl;
+  [...event.currentTarget.querySelectorAll('button')].forEach(b => b.classList.toggle('active', b === btn));
+  ta.focus();
+  const anchor = '•품목: ';
+  const at = tpl.indexOf(anchor);
+  const pos = at >= 0 ? at + anchor.length : tpl.length;
+  ta.setSelectionRange(pos, pos);
+}
+
+// 폼 초기화 시 비고 양식 선택 상태도 해제
+function resetNotePreset() {
+  const np = document.getElementById('notePreset');
+  if (np) np.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+}
+
 function submitTransaction(event) {
   event.preventDefault();
   if (!requireUnlock()) return;
@@ -1194,6 +1227,7 @@ function submitTransaction(event) {
   enqueue({ type: 'insertTx', row: tx });
   logActivity('수불 등록', `${tx.type} · ${item.name}/${item.size} · ${tx.quantity}개`);
   els.transactionForm.reset();
+  resetNotePreset();
   setDefaultDates();
   syncTransactionItem();
   renderAll();

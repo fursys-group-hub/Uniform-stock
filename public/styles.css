@@ -1006,3 +1006,6 @@ body.locked [data-panel="history"] #historyTableBody td:nth-child(7),
 body.locked [data-panel="history"] #historyTableBody td:nth-child(8),
 body.locked [data-panel="history"] #historyTableBody td:nth-child(9),
 body.locked [data-panel="history"] #historyTableBody td:nth-child(11) { display: none; }
+
+/* 비고 양식 종류 선택 버튼 */
+.note-preset { margin: 4px 0 8px; }
