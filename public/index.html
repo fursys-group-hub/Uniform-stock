@@ -4,9 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LETUS 시공팀 유니폼 재고관리</title>
-  <link rel="stylesheet" href="./styles.css?v=30" />
+  <link rel="stylesheet" href="./styles.css?v=31" />
 </head>
 <body>
+  <!-- ===== 진입 비밀번호 게이트 (사내 보안 정책) ===== -->
+  <div class="gate" id="adminGate">
+    <div class="gate-card">
+      <div class="gate-ico">🔒</div>
+      <h2>LETUS 시공팀 유니폼 재고관리</h2>
+      <p>접속 비밀번호를 입력해주세요.</p>
+      <input id="adminGatePw" type="password" inputmode="numeric" placeholder="••••" autocomplete="off" maxlength="8" />
+      <button type="button" id="adminGateBtn" class="primary-btn">입장</button>
+      <div class="gate-err" id="adminGateErr"></div>
+    </div>
+  </div>
+
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
@@ -526,6 +538,6 @@
     </article>
   </template>
 
-  <script src="./app.js?v=52"></script>
+  <script src="./app.js?v=53"></script>
 </body>
 </html>

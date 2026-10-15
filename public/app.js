@@ -244,7 +244,36 @@ const els = {
   reqsumReagg: document.getElementById('reqsumReagg')
 };
 
+// 진입 게이트(사내 보안 정책) — 시공팀 대시보드와 동일한 방식의 접속 비밀번호.
+// 클라이언트 측 1차 차단용(장난/우발 접근 방지). 실제 데이터 보호는 서버 마스킹·토큰이 담당.
+const ADMIN_GATE_PASSWORD = '1593';
+const ADMIN_GATE_KEY = 'letus_admin_gate';
+function initGate() {
+  const gate = document.getElementById('adminGate');
+  if (!gate) return;
+  if (sessionStorage.getItem(ADMIN_GATE_KEY) === '1') { gate.hidden = true; return; }
+  gate.hidden = false;
+  const pw = document.getElementById('adminGatePw');
+  const btn = document.getElementById('adminGateBtn');
+  const err = document.getElementById('adminGateErr');
+  const tryEnter = () => {
+    if ((pw.value || '').trim() === ADMIN_GATE_PASSWORD) {
+      sessionStorage.setItem(ADMIN_GATE_KEY, '1');
+      gate.hidden = true;
+    } else {
+      if (err) err.textContent = '비밀번호가 올바르지 않습니다.';
+      const card = gate.querySelector('.gate-card');
+      card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+      pw.select();
+    }
+  };
+  if (btn) btn.addEventListener('click', tryEnter);
+  if (pw) pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryEnter(); });
+  setTimeout(() => pw && pw.focus(), 100);
+}
+
 function init() {
+  initGate();
   bindEvents();
   bindAuthEvents();
   ensureStandardSizes();        // 표준 사이즈를 실제 품목(재고 0=품절)으로 보강

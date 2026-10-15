@@ -998,3 +998,17 @@ body:not(.locked) .content > .page-header { box-shadow: inset 0 3px 0 #1f7a45; }
 
 /* 비고 양식 종류 선택 버튼 */
 .note-preset { margin: 4px 0 8px; }
+
+/* ===================== 진입 비밀번호 게이트 (사내 보안) ===================== */
+.gate { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 24px; background: linear-gradient(135deg, #0f2419, #14532d); }
+.gate[hidden] { display: none; }
+.gate-card { background: #fff; border-radius: 22px; box-shadow: 0 24px 70px rgba(0,0,0,.35); padding: 38px 30px; width: 100%; max-width: 380px; text-align: center; }
+.gate-ico { font-size: 44px; margin-bottom: 10px; }
+.gate-card h2 { margin: 0 0 6px; font-size: 20px; color: #14532d; }
+.gate-card p { margin: 0 0 20px; color: #64748b; font-size: 14px; }
+.gate-card input { width: 100%; box-sizing: border-box; padding: 14px; border: 1.5px solid #e2e8f0; border-radius: 13px; font-size: 20px; text-align: center; letter-spacing: 6px; margin-bottom: 14px; font-family: inherit; }
+.gate-card input:focus { outline: none; border-color: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.18); }
+.gate-card .primary-btn { width: 100%; }
+.gate-err { color: #dc2626; font-size: 13px; min-height: 18px; font-weight: 600; margin-top: 8px; }
+.gate .shake { animation: gate-shake .32s; }
+@keyframes gate-shake { 0%,100%{transform:none} 20%,60%{transform:translateX(-7px)} 40%,80%{transform:translateX(7px)} }
