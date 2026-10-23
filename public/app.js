@@ -1730,6 +1730,8 @@ function renderBilling() {
     billingRows = [];
     els.billingSummaryCards.innerHTML = '';
     if (els.billingPivot) els.billingPivot.innerHTML = '';
+    const trendEl = document.getElementById('billingTrend');
+    if (trendEl) trendEl.innerHTML = '';
     els.billingTableBody.innerHTML = lockNoticeRow(7, '청구금액·단가·담당자는 권한 비밀번호로 잠금 해제 후 확인할 수 있습니다.');
     return;
   }
@@ -1771,6 +1773,189 @@ function renderBilling() {
       </tr>
     `;
   }).join('') || `<tr><td colspan="7" class="empty-state">청구할 분출 내역이 없습니다.</td></tr>`;
+
+  renderBillingTrend();
+}
+
+/* ===== 월별 청구 추이 (청구 조회 하단) =====
+ * 목적: 시스템 도입 후 이용이 얼마나 늘었는지 금액·이용 권역 수로 한눈에 확인.
+ * 상단 월/권역 필터와 무관하게 전체 분출 기준. (선택한 월은 진하게 강조, 이번 달은 진행 중이라 빗금)
+ * 두 지표는 단위가 달라 이중축 대신 같은 가로축을 공유하는 두 개의 차트로 분리한다.
+ */
+let billingTrendData = [];
+
+function ymKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
+
+function buildBillingTrend() {
+  const all = state.transactions.filter(tx => tx.type === '분출' && tx.date);
+  if (!all.length) return [];
+  const cur = ymKey(new Date());
+  const keys = all.map(tx => String(tx.date).slice(0, 7)).sort();
+  const first = keys[0];
+  const last = keys[keys.length - 1] > cur ? keys[keys.length - 1] : cur;
+  const months = [];
+  let [y, m] = first.split('-').map(Number);
+  const [ly, lm] = last.split('-').map(Number);
+  while (y < ly || (y === ly && m <= lm)) {
+    months.push(`${y}-${String(m).padStart(2, '0')}`);
+    if (++m > 12) { m = 1; y++; }
+  }
+  const by = new Map(months.map(k => [k, { amount: 0, count: 0, regions: new Set() }]));
+  all.forEach(tx => {
+    const g = by.get(String(tx.date).slice(0, 7));
+    if (!g) return;
+    g.amount += Number(tx.amount) || 0;
+    g.count++;
+    if (tx.receiver) g.regions.add(tx.receiver);
+  });
+  return months.map(k => {
+    const g = by.get(k);
+    return { key: k, amount: g.amount, count: g.count, regions: g.regions.size, partial: k === cur };
+  });
+}
+
+// 눈금 최대값을 1·2·5 계열의 깔끔한 수로
+function niceCeil(v) {
+  if (v <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+}
+
+// 축 라벨용 짧은 금액 표기 (만/억)
+function wonShort(v) {
+  if (v >= 1e8) return `${(v / 1e8).toFixed(v % 1e8 ? 1 : 0)}억`;
+  if (v >= 1e4) return `${Math.round(v / 1e4).toLocaleString()}만`;
+  return v.toLocaleString();
+}
+
+// 위쪽만 둥근 막대(기준선에 붙은 쪽은 각지게)
+function topRoundedBar(x, y, w, h, r) {
+  if (h <= 0) return '';
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+
+function trendBarSvg(data, { id, valueOf, axisFmt, labelFmt, aria }) {
+  const W = 760, H = 210, padL = 52, padR = 10, padT = 22, padB = 30;
+  const plotW = W - padL - padR, plotH = H - padT - padB, baseY = padT + plotH;
+  const n = data.length;
+  const max = niceCeil(Math.max(...data.map(valueOf)));
+  const colW = plotW / n;
+  const barW = Math.max(2, Math.min(36, colW * 0.62, colW - 2)); // 막대 사이 최소 2px 간격
+  const yOf = v => baseY - (v / max) * plotH;
+  const ticks = [0, max / 2, max];
+  const grid = ticks.map(t => `<line x1="${padL}" y1="${yOf(t).toFixed(1)}" x2="${W - padR}" y2="${yOf(t).toFixed(1)}" class="chart-grid"></line>`
+    + `<text x="${padL - 8}" y="${(yOf(t) + 4).toFixed(1)}" class="chart-axis" text-anchor="end">${axisFmt(t)}</text>`).join('');
+
+  // 직접 라벨은 선택적으로: 최댓값 막대 + 가장 최근 완결월만
+  const vals = data.map(valueOf);
+  const maxIdx = vals.indexOf(Math.max(...vals));
+  let lastDone = -1;
+  for (let i = n - 1; i >= 0; i--) if (!data[i].partial) { lastDone = i; break; }
+  const labelIdx = new Set([maxIdx, lastDone].filter(i => i >= 0 && vals[i] > 0));
+
+  const step = Math.ceil(n / 12); // 가로축 라벨은 최대 12개 정도만
+  const cols = data.map((d, i) => {
+    const v = valueOf(d);
+    const cx = padL + i * colW + colW / 2;
+    const x = cx - barW / 2, y = yOf(v), h = baseY - y;
+    const sel = billingFilter.month === d.key;
+    const cls = `trend-bar${sel ? ' is-sel' : ''}`;
+    // 인라인 style이어야 CSS의 기본 fill을 이긴다
+    const fill = d.partial ? ` style="fill:url(#${id}-hatch);stroke:var(--primary);stroke-width:1"` : '';
+    const showX = i === 0 || i === n - 1 || i % step === 0;
+    const [yy, mm] = d.key.split('-');
+    return `<g class="trend-col" data-i="${i}">
+      <rect class="trend-hover" x="${(padL + i * colW).toFixed(1)}" y="${padT}" width="${colW.toFixed(1)}" height="${plotH}"></rect>
+      <path class="${cls}"${fill} d="${topRoundedBar(x, y, barW, h, 4)}"></path>
+      ${labelIdx.has(i) ? `<text class="trend-val" x="${cx.toFixed(1)}" y="${(y - 6).toFixed(1)}" text-anchor="middle">${labelFmt(v)}</text>` : ''}
+      ${showX ? `<text class="chart-axis" x="${cx.toFixed(1)}" y="${baseY + 16}" text-anchor="middle">${yy.slice(2)}.${mm}</text>` : ''}
+      <rect class="trend-hit" x="${(padL + i * colW).toFixed(1)}" y="0" width="${colW.toFixed(1)}" height="${H}"></rect>
+    </g>`;
+  }).join('');
+
+  const defs = `<defs><pattern id="${id}-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="6" height="6" fill="#ffffff"></rect><rect width="2.5" height="6" fill="var(--primary)"></rect></pattern></defs>`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="${aria}">${defs}${grid}
+    <line x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" class="chart-grid"></line>${cols}</svg>`;
+}
+
+function trendTipHtml(i) {
+  const d = billingTrendData[i];
+  if (!d) return '';
+  const [y, m] = d.key.split('-');
+  const prev = billingTrendData[i - 1];
+  let diff = '';
+  if (prev && prev.amount > 0 && !d.partial) {
+    const pct = Math.round(((d.amount - prev.amount) / prev.amount) * 100);
+    diff = `<div class="muted">전월 대비 ${pct > 0 ? '+' : ''}${pct}%</div>`;
+  }
+  return `<b>${y}년 ${Number(m)}월${d.partial ? ' (진행 중)' : ''}</b>
+    <div>청구금액 ${formatCurrency(d.amount)}</div>
+    <div>이용 권역 ${d.regions}곳 · 분출 ${formatNumber(d.count)}건</div>${diff}`;
+}
+
+function renderBillingTrend() {
+  const el = document.getElementById('billingTrend');
+  if (!el) return;
+  billingTrendData = buildBillingTrend();
+  const data = billingTrendData;
+  if (!data.length) { el.innerHTML = ''; return; }
+
+  // 요약 카드: 누적 청구액 / 최근 완결월 청구액(전월 대비) / 이용 권역 수 변화(첫 달 → 최근 완결월)
+  const done = data.filter(d => !d.partial);
+  const lastD = done[done.length - 1] || data[data.length - 1];
+  const prevD = done[done.length - 2];
+  const firstD = data.find(d => d.count > 0) || data[0];
+  const total = data.reduce((a, d) => a + d.amount, 0);
+  const pct = prevD && prevD.amount > 0 ? Math.round(((lastD.amount - prevD.amount) / prevD.amount) * 100) : null;
+  // 이용 권역 수는 진행 중인 이번 달도 포함(이미 이용한 곳은 확정이라 하한값으로 유효)
+  const latest = data[data.length - 1];
+  const regionDelta = latest.regions - firstD.regions;
+  const ymLabel = k => { const [y, m] = k.split('-'); return `${y.slice(2)}.${m}`; };
+  const cards = [
+    [`누적 청구금액 (${ymLabel(data[0].key)}~)`, formatCurrency(total)],
+    [`${ymLabel(lastD.key)} 청구금액${pct === null ? '' : ` · 전월 대비 ${pct > 0 ? '+' : ''}${pct}%`}`, formatCurrency(lastD.amount)],
+    [`이용 권역 수 (${ymLabel(firstD.key)} → ${ymLabel(latest.key)}${latest.partial ? ' 진행 중' : ''})`, `${firstD.regions}곳 → ${latest.regions}곳${regionDelta ? ` (${regionDelta > 0 ? '+' : ''}${regionDelta})` : ''}`]
+  ];
+
+  el.innerHTML = `
+    <div class="trend-head">
+      <h4>📈 월별 청구 추이</h4>
+      <span class="trend-note">전체 권역 기준 · 상단 필터와 무관 · 빗금 = 이번 달(진행 중) · 막대에 마우스를 올리면 상세</span>
+    </div>
+    <div class="cards-grid">${cards.map(([l, v]) => `<div class="summary-card"><span>${l}</span><strong>${v}</strong></div>`).join('')}</div>
+    <div class="trend-chart">
+      <h5>월별 청구금액</h5>
+      ${trendBarSvg(data, { id: 'trAmt', valueOf: d => d.amount, axisFmt: wonShort, labelFmt: wonShort, aria: '월별 청구금액 막대그래프' })}
+      <div class="trend-tip" hidden></div>
+    </div>
+    <div class="trend-chart">
+      <h5>월별 이용 권역 수 <span class="trend-sub">(그 달에 분출받은 수령 담당자 수)</span></h5>
+      ${trendBarSvg(data, { id: 'trReg', valueOf: d => d.regions, axisFmt: v => `${Math.round(v)}`, labelFmt: v => `${v}곳`, aria: '월별 이용 권역 수 막대그래프' })}
+      <div class="trend-tip" hidden></div>
+    </div>`;
+
+  el.querySelectorAll('.trend-chart').forEach(box => {
+    const tip = box.querySelector('.trend-tip');
+    box.querySelectorAll('.trend-col').forEach(col => {
+      col.addEventListener('mouseenter', () => {
+        const bar = col.querySelector('.trend-bar');
+        const hit = col.querySelector('.trend-hit');
+        const b = box.getBoundingClientRect();
+        const hb = hit.getBoundingClientRect();
+        const bb = bar.getBoundingClientRect();
+        tip.innerHTML = trendTipHtml(Number(col.dataset.i));
+        tip.hidden = false;
+        const top = (bb.height > 0 ? bb.top : hb.bottom - 30) - b.top - 8;
+        const left = Math.min(Math.max(hb.left + hb.width / 2 - b.left, 90), b.width - 90);
+        tip.style.left = `${left}px`;
+        tip.style.top = `${Math.max(top, 40)}px`;
+      });
+      col.addEventListener('mouseleave', () => { tip.hidden = true; });
+    });
+  });
 }
 
 // 청구 조회 엑셀 내보내기 — 현재 필터(월/담당자) 그대로. 열: 날짜·수령담당자·품목·사이즈·수량·단가·청구금액

@@ -1012,3 +1012,21 @@ body:not(.locked) .content > .page-header { box-shadow: inset 0 3px 0 #1f7a45; }
 .gate-err { color: #dc2626; font-size: 13px; min-height: 18px; font-weight: 600; margin-top: 8px; }
 .gate .shake { animation: gate-shake .32s; }
 @keyframes gate-shake { 0%,100%{transform:none} 20%,60%{transform:translateX(-7px)} 40%,80%{transform:translateX(7px)} }
+
+/* ===================== 청구 조회 · 월별 청구 추이 ===================== */
+.billing-trend { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.trend-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.trend-head h4 { margin: 0; font-size: 15px; color: var(--text); }
+.trend-note { font-size: 12px; color: var(--muted); }
+.trend-chart { position: relative; margin-top: 14px; padding: 12px 12px 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.trend-chart h5 { margin: 0 0 4px; font-size: 13px; font-weight: 700; color: var(--text); }
+.trend-sub { font-weight: 400; color: var(--muted); font-size: 12px; }
+.chart-svg .trend-bar { fill: var(--primary); }
+.chart-svg .trend-bar.is-sel { fill: var(--primary-deep); }
+.chart-svg .trend-hover { fill: var(--primary-soft); opacity: 0; }
+.chart-svg .trend-col:hover .trend-hover { opacity: .7; }
+.chart-svg .trend-hit { fill: transparent; }
+.chart-svg .trend-val { font-size: 11px; font-weight: 700; fill: var(--text); }
+.trend-tip { position: absolute; z-index: 5; pointer-events: none; transform: translate(-50%, -100%); background: #0f2419; color: #fff; font-size: 12px; line-height: 1.55; padding: 8px 10px; border-radius: 8px; box-shadow: var(--shadow); white-space: nowrap; }
+.trend-tip[hidden] { display: none; }
+.trend-tip .muted { color: #cbd5e1; }
