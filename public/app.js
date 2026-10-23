@@ -1836,41 +1836,41 @@ function topRoundedBar(x, y, w, h, r) {
   return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
 }
 
-function trendBarSvg(data, { id, valueOf, axisFmt, labelFmt, aria }) {
-  const W = 760, H = 210, padL = 52, padR = 10, padT = 22, padB = 30;
+// 선택 연도의 1~12월 막대그래프. 데이터가 없는 달은 막대 없이 비워 둔다.
+function trendBarSvg(data, { id, aria }) {
+  const W = 760, H = 220, padL = 52, padR = 10, padT = 22, padB = 30;
   const plotW = W - padL - padR, plotH = H - padT - padB, baseY = padT + plotH;
-  const n = data.length;
-  const max = niceCeil(Math.max(...data.map(valueOf)));
+  const n = data.length; // 항상 12
+  const vals = data.map(d => (d.empty ? 0 : d.amount));
+  const max = niceCeil(Math.max(...vals));
   const colW = plotW / n;
   const barW = Math.max(2, Math.min(36, colW * 0.62, colW - 2)); // 막대 사이 최소 2px 간격
   const yOf = v => baseY - (v / max) * plotH;
   const ticks = [0, max / 2, max];
   const grid = ticks.map(t => `<line x1="${padL}" y1="${yOf(t).toFixed(1)}" x2="${W - padR}" y2="${yOf(t).toFixed(1)}" class="chart-grid"></line>`
-    + `<text x="${padL - 8}" y="${(yOf(t) + 4).toFixed(1)}" class="chart-axis" text-anchor="end">${axisFmt(t)}</text>`).join('');
+    + `<text x="${padL - 8}" y="${(yOf(t) + 4).toFixed(1)}" class="chart-axis" text-anchor="end">${wonShort(t)}</text>`).join('');
 
   // 직접 라벨은 선택적으로: 최댓값 막대 + 가장 최근 완결월만
-  const vals = data.map(valueOf);
   const maxIdx = vals.indexOf(Math.max(...vals));
   let lastDone = -1;
-  for (let i = n - 1; i >= 0; i--) if (!data[i].partial) { lastDone = i; break; }
+  for (let i = n - 1; i >= 0; i--) if (!data[i].empty && !data[i].partial) { lastDone = i; break; }
   const labelIdx = new Set([maxIdx, lastDone].filter(i => i >= 0 && vals[i] > 0));
 
-  const step = Math.ceil(n / 12); // 가로축 라벨은 최대 12개 정도만
   const cols = data.map((d, i) => {
-    const v = valueOf(d);
     const cx = padL + i * colW + colW / 2;
+    const xLabel = `<text class="chart-axis" x="${cx.toFixed(1)}" y="${baseY + 16}" text-anchor="middle">${i + 1}월</text>`;
+    if (d.empty) return xLabel; // 원본 데이터 없는 달은 비워 둠
+    const v = d.amount;
     const x = cx - barW / 2, y = yOf(v), h = baseY - y;
     const sel = billingFilter.month === d.key;
     const cls = `trend-bar${sel ? ' is-sel' : ''}`;
     // 인라인 style이어야 CSS의 기본 fill을 이긴다
     const fill = d.partial ? ` style="fill:url(#${id}-hatch);stroke:var(--primary);stroke-width:1"` : '';
-    const showX = i === 0 || i === n - 1 || i % step === 0;
-    const [yy, mm] = d.key.split('-');
     return `<g class="trend-col" data-i="${i}">
       <rect class="trend-hover" x="${(padL + i * colW).toFixed(1)}" y="${padT}" width="${colW.toFixed(1)}" height="${plotH}"></rect>
       <path class="${cls}"${fill} d="${topRoundedBar(x, y, barW, h, 4)}"></path>
-      ${labelIdx.has(i) ? `<text class="trend-val" x="${cx.toFixed(1)}" y="${(y - 6).toFixed(1)}" text-anchor="middle">${labelFmt(v)}</text>` : ''}
-      ${showX ? `<text class="chart-axis" x="${cx.toFixed(1)}" y="${baseY + 16}" text-anchor="middle">${yy.slice(2)}.${mm}</text>` : ''}
+      ${labelIdx.has(i) ? `<text class="trend-val" x="${cx.toFixed(1)}" y="${(y - 6).toFixed(1)}" text-anchor="middle">${wonShort(v)}</text>` : ''}
+      ${xLabel}
       <rect class="trend-hit" x="${(padL + i * colW).toFixed(1)}" y="0" width="${colW.toFixed(1)}" height="${H}"></rect>
     </g>`;
   }).join('');
@@ -1881,11 +1881,15 @@ function trendBarSvg(data, { id, valueOf, axisFmt, labelFmt, aria }) {
     <line x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" class="chart-grid"></line>${cols}</svg>`;
 }
 
+let trendYear = null;   // 선택된 연도 탭
+let trendView = [];     // 선택 연도의 1~12월 데이터
+
 function trendTipHtml(i) {
-  const d = billingTrendData[i];
-  if (!d) return '';
+  const d = trendView[i];
+  if (!d || d.empty) return '';
   const [y, m] = d.key.split('-');
-  const prev = billingTrendData[i - 1];
+  const idx = billingTrendData.findIndex(x => x.key === d.key);
+  const prev = billingTrendData[idx - 1]; // 1월이면 전년도 12월과 비교
   let diff = '';
   if (prev && prev.amount > 0 && !d.partial) {
     const pct = Math.round(((d.amount - prev.amount) / prev.amount) * 100);
@@ -1920,6 +1924,18 @@ function renderBillingTrend() {
     [`이용 권역 수 (${ymLabel(firstD.key)} → ${ymLabel(latest.key)}${latest.partial ? ' 진행 중' : ''})`, `${firstD.regions}곳 → ${latest.regions}곳${regionDelta ? ` (${regionDelta > 0 ? '+' : ''}${regionDelta})` : ''}`]
   ];
 
+  // 연도 탭: 데이터가 있는 연도만. 기본은 올해(없으면 가장 최근 연도)
+  const years = [...new Set(data.map(d => d.key.slice(0, 4)))].sort();
+  const thisYear = String(new Date().getFullYear());
+  if (!years.includes(trendYear)) trendYear = years.includes(thisYear) ? thisYear : years[years.length - 1];
+  const byKey = new Map(data.map(d => [d.key, d]));
+  trendView = Array.from({ length: 12 }, (_, i) => {
+    const key = `${trendYear}-${String(i + 1).padStart(2, '0')}`;
+    const d = byKey.get(key);
+    return d && d.count > 0 ? { ...d, empty: false } : { key, empty: true };
+  });
+  const yearTotal = trendView.reduce((a, d) => a + (d.empty ? 0 : d.amount), 0);
+
   el.innerHTML = `
     <div class="trend-head">
       <h4>📈 월별 청구 추이</h4>
@@ -1927,15 +1943,21 @@ function renderBillingTrend() {
     </div>
     <div class="cards-grid">${cards.map(([l, v]) => `<div class="summary-card"><span>${l}</span><strong>${v}</strong></div>`).join('')}</div>
     <div class="trend-chart">
-      <h5>월별 청구금액</h5>
-      ${trendBarSvg(data, { id: 'trAmt', valueOf: d => d.amount, axisFmt: wonShort, labelFmt: wonShort, aria: '월별 청구금액 막대그래프' })}
-      <div class="trend-tip" hidden></div>
-    </div>
-    <div class="trend-chart">
-      <h5>월별 이용 권역 수 <span class="trend-sub">(그 달에 분출받은 수령 담당자 수)</span></h5>
-      ${trendBarSvg(data, { id: 'trReg', valueOf: d => d.regions, axisFmt: v => `${Math.round(v)}`, labelFmt: v => `${v}곳`, aria: '월별 이용 권역 수 막대그래프' })}
+      <div class="trend-chart-head">
+        <h5>월별 청구금액 <span class="trend-sub">${trendYear}년 합계 ${formatCurrency(yearTotal)}</span></h5>
+        <div class="seg" id="trendYearSeg">${years.map(y => `<button type="button" data-year="${y}"${y === trendYear ? ' class="active"' : ''}>${y.slice(2)}년</button>`).join('')}</div>
+      </div>
+      ${trendBarSvg(trendView, { id: 'trAmt', aria: `${trendYear}년 월별 청구금액 막대그래프` })}
       <div class="trend-tip" hidden></div>
     </div>`;
+
+  const seg = el.querySelector('#trendYearSeg');
+  if (seg) seg.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-year]');
+    if (!b || b.dataset.year === trendYear) return;
+    trendYear = b.dataset.year;
+    renderBillingTrend();
+  });
 
   el.querySelectorAll('.trend-chart').forEach(box => {
     const tip = box.querySelector('.trend-tip');
